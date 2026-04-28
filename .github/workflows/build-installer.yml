@@ -41,7 +41,7 @@ jobs:
           restore-keys: ${{ runner.os }}-cargo-
 
       - name: Install Tauri CLI
-        run: cargo install tauri-cli --version 1.6.5 --locked
+        run: cargo install tauri-cli --version 1.6.5 --locked --force
 
       - name: Install backend (with PyInstaller)
         working-directory: backend
