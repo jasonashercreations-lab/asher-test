@@ -112,7 +112,7 @@ class Engine:
                 self.last_fetch_at = now
                 await self.broadcast_frame()
                 last_render = now
-            await asyncio.sleep(0.25)
+            await asyncio.sleep(0.1)
 
     def stop(self):
         self._running = False

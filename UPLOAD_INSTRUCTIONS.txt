@@ -1,30 +1,39 @@
 ================================================================
-  CSV DEFAULT: BANNER OUTLINE = TEAM PRIMARY (per side)
+  LIVE TICKING CLOCK
 ================================================================
 
-In the CSV Default theme, the banner outline is now SPLIT:
-  - LEFT half  = the away team's primary color
-  - RIGHT half = the home team's primary color
+The NHL API source now polls api-web.nhle.com every 1 second
+instead of every 10 seconds. The clock will tick second-by-second
+in real time during live games.
 
-So for ANA @ CBJ you'd see orange on the left, navy on the right.
-For NYR @ BUF the split is invisible because both teams use blue.
+Two changes:
 
-Period/clock/stats grid stays plain WHITE as before.
-Score row borders and penalty cell borders still use the CSV-curated
-team accents.
+  1. NHLSource.poll_interval_sec default lowered from 10.0 to 1.0
+  2. Engine async sleep tightened from 0.25s to 0.1s so the
+     1Hz polls actually fire on schedule
 
-Other 6 themes keep their unified single-color banner outlines:
-  - Heritage   = warm brown across the whole banner row
-  - Midnight   = dark blue-gray
-  - Ice Rink   = light steel
-  - Neon       = electric green
-  - Stealth    = monochrome gray
-  - Classic    = neutral gray (with team auto-swap on score/penalty)
+================================================================
+  TRADEOFFS TO BE AWARE OF
+================================================================
 
-Implementation: RenderColors gained two new fields,
-away_banner_outline and home_banner_outline. CSV Default fills
-them with the team primaries; every other theme fills them with
-chrome (the existing single-color banner look).
+  - ~3,600 requests/hour against api-web.nhle.com per running
+    client. The NHL API is public but doesn't publish a documented
+    rate limit. If you ship this to many users running the app
+    concurrently, you may get throttled or temporarily blocked.
+
+  - The clock will appear to "lag" or "skip" by ~1 second
+    occasionally because the API itself doesn't update perfectly
+    in lockstep with real time. This is normal.
+
+  - Existing project files saved before this update will still
+    have their old poll_interval_sec value (10.0) in the JSON.
+    To get the live tick on existing projects:
+      Open the project -> Source panel ->
+      change Poll interval to 1.0 and save.
+    New projects use 1.0 by default.
+
+  - You can change the interval per project at any time via the
+    Source panel (the Pydantic model still allows any float).
 
 ================================================================
   HOW TO RE-UPLOAD
@@ -35,7 +44,7 @@ chrome (the existing single-color banner look).
 3. Drag everything inside the unzipped folder onto your local
    nhl-scoreboard folder. Replace all when asked.
 4. GitHub Desktop:
-     Summary: "csv default: split banner outline = team primary per side"
+     Summary: "live ticking clock - poll api every 1s"
      Commit + Push
 5. Wait ~10 min for the new .msi.
 

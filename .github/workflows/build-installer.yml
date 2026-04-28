@@ -1,8 +1,5 @@
 name: Build Windows Installer
 
-# When does this run?
-#   - Every push to the main branch
-#   - Whenever you click "Run workflow" in the Actions tab
 on:
   push:
     branches: [main]
@@ -41,7 +38,7 @@ jobs:
           restore-keys: ${{ runner.os }}-cargo-
 
       - name: Install Tauri CLI
-        run: cargo install tauri-cli --version 1.6.5 --locked
+        run: cargo install tauri-cli --version 1.6.5 --locked --force
 
       - name: Install backend (with PyInstaller)
         working-directory: backend
@@ -86,11 +83,4 @@ jobs:
         with:
           name: NHL-Scoreboard-Studio-Installer
           path: desktop/src-tauri/target/release/bundle/msi/*.msi
-          retention-days: 90
-
-      - name: Upload .exe (NSIS) as well
-        uses: actions/upload-artifact@v4
-        with:
-          name: NHL-Scoreboard-Studio-Installer-NSIS
-          path: desktop/src-tauri/target/release/bundle/nsis/*.exe
           retention-days: 90
