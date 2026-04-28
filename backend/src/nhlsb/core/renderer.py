@@ -302,7 +302,7 @@ def render(project: Project, state: GameState,
     if L.show_sprites and sprite_w_px > 0:
         stats_h_px = y_stats_bot - y_stats_top
 
-        def _draw_team_sprite(x_origin: int, abbr: str, colors, override):
+        def _draw_team_sprite(x_origin: int, abbr: str, colors, override, is_away: bool):
             asset_img = None
             # Tier 1: user-uploaded override via Teams panel
             if override and override.sprite_asset and assets_root:
@@ -317,14 +317,26 @@ def render(project: Project, state: GameState,
                 p_, s_, e_ = colors
                 asset_img = sprites.render_procedural(
                     pixels, p_.tuple(), s_.tuple(), e_.tuple(), scale=1)
+
+            # Feature 1: standardize all sprites to a fixed canvas (130x200)
+            # so every team renders at the same visual size regardless of
+            # upload dimensions or aspect ratio.
+            asset_img = sprites.pad_to_canvas(asset_img)
+
+            # Feature 2: away-side gets a lighter (away-jersey) tint
+            if is_away:
+                asset_img = sprites.tint_for_away(asset_img)
+
             fitted = sprites.fit_sprite(asset_img, sprite_w_px - 4, stats_h_px - 4)
             ox = x_origin + (sprite_w_px - fitted.width) // 2
             oy = y_stats_top + (stats_h_px - fitted.height) // 2
             img.paste(fitted, (ox, oy), fitted if fitted.mode == "RGBA" else None)
 
         _draw_team_sprite(0, away_t.abbrev, away_colors,
-                          project.team_overrides.get(away_t.abbrev))
+                          project.team_overrides.get(away_t.abbrev),
+                          is_away=True)
         _draw_team_sprite(x_stats_right, home_t.abbrev, home_colors,
-                          project.team_overrides.get(home_t.abbrev))
+                          project.team_overrides.get(home_t.abbrev),
+                          is_away=False)
 
     return img
