@@ -1,0 +1,103 @@
+================================================================
+  NHL SCOREBOARD STUDIO
+  Build your installer in the cloud, not on your PC.
+================================================================
+
+WHAT THIS DOES
+  GitHub builds the Windows .msi installer for you, automatically,
+  every time you push code. You download the finished .msi and
+  email/share it with clients. They double-click to install.
+
+  Every new version auto-replaces the old one when clients run
+  the new .msi - no "uninstall first" step.
+
+================================================================
+  ONE-TIME SETUP (about 10 minutes)
+================================================================
+
+1. Make a free GitHub account at https://github.com/signup
+   (skip if you already have one)
+
+2. Create a new repository:
+     - Click the "+" in the top-right, then "New repository"
+     - Name: nhl-scoreboard
+     - Set it to PRIVATE (recommended since you're selling this)
+     - DO NOT check any of the "Initialize" boxes
+     - Click "Create repository"
+
+3. Upload this entire project folder:
+     - On the new empty repo page, click the link
+       "uploading an existing file"
+     - In File Explorer, open the unzipped nhl-scoreboard folder
+     - Select EVERYTHING inside (Ctrl+A) and DRAG it into the
+       browser window
+     - Wait for uploads to finish (progress bar at bottom)
+     - At the bottom of the page, click "Commit changes"
+
+4. The build starts automatically. Watch it run:
+     - Click the "Actions" tab at the top of your repo
+     - Click the running workflow (will say "Build Windows Installer")
+     - You'll see the build progress live - takes about 8-10 min
+
+5. When the build finishes (green checkmark):
+     - Scroll down to the "Artifacts" section
+     - Click "NHL-Scoreboard-Studio-Installer" to download a .zip
+     - Inside the .zip is your .msi installer
+
+DONE. That .msi is your shareable installer.
+
+================================================================
+  EVERY TIME AFTER THAT
+================================================================
+
+To make a new version:
+
+1. Edit your code locally
+2. Bump the version number in:
+     desktop/src-tauri/tauri.conf.json
+     - Find:  "version": "1.0.0"
+     - Change to: "version": "1.0.1" (or 1.1.0, etc.)
+3. Upload the changed files to GitHub:
+     - On your repo page, navigate to the changed file
+     - Click the pencil icon (Edit)
+     - Paste new content, scroll down, click Commit
+   OR drag-drop the whole folder again with overwrite
+
+4. GitHub auto-builds. Download the new .msi from Actions tab.
+
+5. Send to clients. They double-click to install. Old version
+   is automatically removed and replaced.
+
+================================================================
+  WHAT'S IN THIS PROJECT
+================================================================
+
+  backend/    Python rendering service + NHL data fetcher
+  frontend/   React editor UI
+  desktop/    Tauri shell (wraps it all into a Windows app)
+  assets/     Sprites, fonts, themes
+  examples/   Sample project files
+  docs/       Architecture and Pi deployment notes
+  .github/    GitHub Actions workflow (the auto-build magic)
+
+You don't need to touch any of these unless you're modifying
+the app itself.
+
+================================================================
+  IF SOMETHING BREAKS
+================================================================
+
+If the GitHub build fails (red X in Actions tab):
+  - Click into the failed run
+  - Click the failed step (it will be highlighted red)
+  - Copy the error message
+  - Send it to me
+
+If the .msi installs but the app shows "Backend unreachable":
+  - Open Task Manager, look for nhlsb-server.exe in Details tab
+  - If it's not there, the sidecar crashed - send me the error
+    by running:
+      "C:\Program Files\NHL Scoreboard Studio\nhlsb-server.exe"
+    in PowerShell
+
+================================================================

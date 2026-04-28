@@ -1,0 +1,20 @@
+[Unit]
+Description=NHL Scoreboard service
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=pi
+WorkingDirectory=/opt/nhlsb
+Environment="PYTHONUNBUFFERED=1"
+ExecStart=/opt/nhlsb/.venv/bin/python -m nhlsb --host 0.0.0.0 --port 8765
+Restart=on-failure
+RestartSec=3
+
+# LED matrix needs root for hardware access; either run as root or set
+# capabilities. See rpi-rgb-led-matrix docs for the right answer for your panel.
+# AmbientCapabilities=CAP_SYS_NICE CAP_SYS_RAWIO
+
+[Install]
+WantedBy=multi-user.target

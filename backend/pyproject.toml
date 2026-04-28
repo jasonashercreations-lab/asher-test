@@ -1,0 +1,25 @@
+[project]
+name = "nhlsb"
+version = "1.0.0"
+description = "NHL Scoreboard Studio - data-driven scoreboard renderer + editor"
+requires-python = ">=3.10"
+dependencies = [
+    "fastapi>=0.110",
+    "uvicorn[standard]>=0.27",
+    "pydantic>=2.5",
+    "pillow>=10.0",
+    "python-multipart>=0.0.9",
+]
+
+[project.optional-dependencies]
+matrix = ["rgbmatrix"]            # Pi only - install separately per upstream docs
+
+[project.scripts]
+nhlsb = "nhlsb.__main__:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/nhlsb"]

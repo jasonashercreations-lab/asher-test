@@ -1,0 +1,60 @@
+{
+  "$schema": "https://schema.tauri.app/config/1",
+  "build": {
+    "beforeBuildCommand": "",
+    "beforeDevCommand": "",
+    "devPath": "../../frontend/dist",
+    "distDir": "../../frontend/dist"
+  },
+  "package": {
+    "productName": "NHL Scoreboard Studio",
+    "version": "1.0.0"
+  },
+  "tauri": {
+    "allowlist": {
+      "all": false,
+      "shell": {
+        "all": false,
+        "open": true,
+        "sidecar": true,
+        "scope": [{ "name": "binaries/nhlsb-server", "sidecar": true, "args": true }]
+      }
+    },
+    "bundle": {
+      "active": true,
+      "category": "Utility",
+      "identifier": "com.nhlsb.studio",
+      "targets": ["msi", "nsis"],
+      "externalBin": ["binaries/nhlsb-server"],
+      "icon": [
+        "icons/32x32.png",
+        "icons/128x128.png",
+        "icons/128x128@2x.png",
+        "icons/icon.ico",
+        "icons/icon.icns"
+      ],
+      "windows": {
+        "wix": {
+          "language": ["en-US"],
+          "upgradeCode": "B5F7E80A-3D9F-4E8C-9A2B-1E5C8D4F6A12"
+        },
+        "nsis": {
+          "installMode": "currentUser"
+        }
+      }
+    },
+    "windows": [
+      {
+        "title": "NHL Scoreboard Studio",
+        "width": 1400,
+        "height": 900,
+        "minWidth": 900,
+        "minHeight": 600,
+        "resizable": true
+      }
+    ],
+    "security": {
+      "csp": "default-src 'self'; img-src 'self' blob: data:; connect-src 'self' http://127.0.0.1:8765 ws://127.0.0.1:8765; style-src 'self' 'unsafe-inline'; script-src 'self'"
+    }
+  }
+}
