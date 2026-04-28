@@ -90,6 +90,7 @@ def load_team_sprite(assets_root: Path, abbrev: str) -> Image.Image | None:
     return load_sprite_asset(candidate)
 
 
+<<<<<<< HEAD
 def load_team_logo(assets_root: Path, abbrev: str) -> Image.Image | None:
     """Look for a bundled per-team logo at assets/logos/teams/<ABBREV>.png.
     Logos are the small team crest shown in the 'NYR vs BUF' row.
@@ -123,6 +124,8 @@ def load_team_banner(assets_root: Path, abbrev: str,
     return load_sprite_asset(base / f"{abbr_up}.png")
 
 
+=======
+>>>>>>> 97a7d31b3014b69ccd02255d28512ad96215a0f3
 def pad_to_canvas(sprite: Image.Image,
                   canvas_w: int = CANVAS_W * 10,
                   canvas_h: int = CANVAS_H * 10) -> Image.Image:

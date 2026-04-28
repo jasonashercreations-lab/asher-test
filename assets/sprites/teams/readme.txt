@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 DROP YOUR TEAM PLAYER FIGURE PNGS HERE
 ======================================
 
@@ -17,3 +18,6 @@ For small team crests, use ../../logos/teams/ instead.
 
 Missing teams fall back to a procedural figure tinted with team
 colors (no PNG required to start).
+=======
+Drop your 32 team PNGs here, named like ANA.png, BOS.png, etc.
+>>>>>>> 97a7d31b3014b69ccd02255d28512ad96215a0f3

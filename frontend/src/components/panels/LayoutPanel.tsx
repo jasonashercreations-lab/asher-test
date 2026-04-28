@@ -3,11 +3,14 @@ import { Section, Field, Slider, Switch, Input, Button, Select } from '@/compone
 
 // Bug 7: Quick-test presets grouped by aspect ratio
 const PRESET_GROUPS: { label: string; presets: { name: string; w: number; h: number }[] }[] = [
+<<<<<<< HEAD
   { label: '4:5 (portrait, default)', presets: [
     { name: '800×1000', w: 800, h: 1000 },
     { name: '1080×1350', w: 1080, h: 1350 },
     { name: '1200×1500', w: 1200, h: 1500 },
   ]},
+=======
+>>>>>>> 97a7d31b3014b69ccd02255d28512ad96215a0f3
   { label: '1:1 (square)', presets: [
     { name: '32', w: 32, h: 32 },
     { name: '64', w: 64, h: 64 },
@@ -31,7 +34,11 @@ const PRESET_GROUPS: { label: string; presets: { name: string; w: number; h: num
     { name: '256×128', w: 256, h: 128 },
     { name: '512×256', w: 512, h: 256 },
   ]},
+<<<<<<< HEAD
   { label: '9:16 (tall phone)', presets: [
+=======
+  { label: '9:16 (tall)', presets: [
+>>>>>>> 97a7d31b3014b69ccd02255d28512ad96215a0f3
     { name: '180×320', w: 180, h: 320 },
     { name: '360×640', w: 360, h: 640 },
   ]},
@@ -86,11 +93,19 @@ export function LayoutPanel() {
         </Field>
         <Field label="Width">
           <Input type="number" min={32} max={4096} value={L.width} className="w-20 text-right"
+<<<<<<< HEAD
             onChange={(e) => update((p) => { p.layout.width = parseInt(e.target.value) || 1080; })} />
         </Field>
         <Field label="Height">
           <Input type="number" min={32} max={4096} value={L.height} className="w-20 text-right"
             onChange={(e) => update((p) => { p.layout.height = parseInt(e.target.value) || 1350; })} />
+=======
+            onChange={(e) => update((p) => { p.layout.width = parseInt(e.target.value) || 320; })} />
+        </Field>
+        <Field label="Height">
+          <Input type="number" min={32} max={4096} value={L.height} className="w-20 text-right"
+            onChange={(e) => update((p) => { p.layout.height = parseInt(e.target.value) || 320; })} />
+>>>>>>> 97a7d31b3014b69ccd02255d28512ad96215a0f3
         </Field>
       </Section>
 
