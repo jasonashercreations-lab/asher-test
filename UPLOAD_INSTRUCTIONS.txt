@@ -1,33 +1,30 @@
 ================================================================
-  3-FIX UPDATE
+  CSV DEFAULT: BANNER OUTLINE = TEAM PRIMARY (per side)
 ================================================================
 
-1. PREVIEW AUTO-FITS THE SCREEN
-   The zoom buttons (1x, 2x, 3x...) are gone. The preview now
-   always fits the available pane size while preserving aspect
-   ratio. Resize the window and the preview rescales automatically.
+In the CSV Default theme, the banner outline is now SPLIT:
+  - LEFT half  = the away team's primary color
+  - RIGHT half = the home team's primary color
 
-2. HIGH QUALITY AT ALL RESOLUTIONS
-   Frames are still rendered at full project resolution (e.g.
-   1080x1350) on the backend. The browser downscales them with
-   high-quality smoothing instead of pixel-scaling, so the
-   preview is sharp at any pane size with no blurriness.
+So for ANA @ CBJ you'd see orange on the left, navy on the right.
+For NYR @ BUF the split is invisible because both teams use blue.
 
-3. BANNER NAMING INVERTED
-   New convention - the suffix describes which DISPLAY SIDE the
-   banner is meant for, not the team's role:
+Period/clock/stats grid stays plain WHITE as before.
+Score row borders and penalty cell borders still use the CSV-curated
+team accents.
 
-       <ABBR>_HOME.png   shown on the LEFT of the scoreboard
-                         (used when the team is the AWAY team)
+Other 6 themes keep their unified single-color banner outlines:
+  - Heritage   = warm brown across the whole banner row
+  - Midnight   = dark blue-gray
+  - Ice Rink   = light steel
+  - Neon       = electric green
+  - Stealth    = monochrome gray
+  - Classic    = neutral gray (with team auto-swap on score/penalty)
 
-       <ABBR>_AWAY.png   shown on the RIGHT of the scoreboard
-                         (used when the team is the HOME team)
-
-   For NYR @ BUF: NYR_HOME.png loads on the left, BUF_AWAY.png
-   loads on the right.
-
-   Existing demo files renamed to match. Drop your own banners
-   in assets/banners/teams/ following this convention.
+Implementation: RenderColors gained two new fields,
+away_banner_outline and home_banner_outline. CSV Default fills
+them with the team primaries; every other theme fills them with
+chrome (the existing single-color banner look).
 
 ================================================================
   HOW TO RE-UPLOAD
@@ -35,24 +32,11 @@
 
 1. Unzip somewhere temporary.
 2. View -> Show -> Hidden items so .github folder is visible.
-3. CRITICAL: also delete your old demo banner files first so the
-   renamed versions take cleanly:
-
-     File Explorer -> nhl-scoreboard\assets\banners\teams\
-     Delete: NYR_AWAY.png, BUF_HOME.png (if they exist)
-
-4. Drag everything inside the unzipped folder onto your local
+3. Drag everything inside the unzipped folder onto your local
    nhl-scoreboard folder. Replace all when asked.
-
-5. Verify the banner folder now has:
-     NYR_HOME.png   (was NYR_AWAY.png before)
-     BUF_AWAY.png   (was BUF_HOME.png before)
-     NYR.png and BUF.png (legacy fallbacks)
-
-6. GitHub Desktop:
-     Summary: "preview auto-fit + sharper rendering + banner naming inversion"
+4. GitHub Desktop:
+     Summary: "csv default: split banner outline = team primary per side"
      Commit + Push
-
-7. Wait ~10 min for the new .msi.
+5. Wait ~10 min for the new .msi.
 
 ================================================================

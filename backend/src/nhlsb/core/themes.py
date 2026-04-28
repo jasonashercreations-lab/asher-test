@@ -63,6 +63,12 @@ class RenderColors:
     period_value_text: RGB
     clock_text: RGB
     cell_bg: RGB
+    # Banner outline can be split per side. Most themes set both halves to
+    # the same value (= chrome) for a unified look. CSV Default overrides
+    # them with the team primary colors so each half wraps in its own
+    # team color.
+    away_banner_outline: RGB = (0, 0, 0)   # placeholder; filled per theme
+    home_banner_outline: RGB = (0, 0, 0)
 
 
 # ---------- helpers ----------
@@ -111,7 +117,10 @@ def _csv_default(assets_root, away_abbrev, home_abbrev,
     """Curated colors per matchup from the CSV.
     Chrome is plain WHITE so period/clock/stats stay visually distinct from
     the team-color accents on the score and penalty cells.
+    Banner outline is split: each half wraps in its team's primary color.
     """
+    away_pri_safe = _ensure_contrast(away_pri, 80)
+    home_pri_safe = _ensure_contrast(home_pri, 80)
     mc = matchup.matchup_colors(assets_root, away_abbrev, home_abbrev)
     if mc is not None:
         return RenderColors(
@@ -124,18 +133,22 @@ def _csv_default(assets_root, away_abbrev, home_abbrev,
             period_value_text=(255, 255, 255),
             clock_text=(220, 40, 40),
             cell_bg=(4, 4, 6),
+            away_banner_outline=away_pri_safe,
+            home_banner_outline=home_pri_safe,
         )
     # Fallback when CSV doesn't have this matchup
     return RenderColors(
         background=(8, 8, 10),
-        away_accent=_ensure_contrast(away_pri, 80),
-        home_accent=_ensure_contrast(home_pri, 80),
+        away_accent=away_pri_safe,
+        home_accent=home_pri_safe,
         chrome=(255, 255, 255),
         score_text=(255, 255, 255),
         label_text=(255, 255, 255),
         period_value_text=(255, 255, 255),
         clock_text=(220, 40, 40),
         cell_bg=(4, 4, 6),
+        away_banner_outline=away_pri_safe,
+        home_banner_outline=home_pri_safe,
     )
 
 
@@ -145,16 +158,19 @@ def _classic_bordered(assets_root, away_abbrev, home_abbrev,
     Bright team primaries with auto-swap when they collide.
     """
     a, h = _distinct_pair(away_pri, away_sec, home_pri, home_sec)
+    chrome = (130, 134, 144)
     return RenderColors(
         background=(8, 8, 10),
         away_accent=_ensure_contrast(a, 80),
         home_accent=_ensure_contrast(h, 80),
-        chrome=(130, 134, 144),
+        chrome=chrome,
         score_text=(255, 255, 255),
         label_text=(255, 255, 255),
         period_value_text=(255, 255, 255),
         clock_text=(220, 40, 40),
         cell_bg=(4, 4, 6),
+        away_banner_outline=chrome,
+        home_banner_outline=chrome,
     )
 
 
@@ -167,16 +183,19 @@ def _midnight(assets_root, away_abbrev, home_abbrev,
     """
     GOLD = (212, 175, 55)
     DEEP_NAVY = (8, 14, 32)
+    chrome = (60, 80, 120)
     return RenderColors(
         background=DEEP_NAVY,
         away_accent=GOLD,
         home_accent=GOLD,
-        chrome=(60, 80, 120),         # deep blue-gray, distinct from gold
+        chrome=chrome,
         score_text=GOLD,
         label_text=GOLD,
         period_value_text=GOLD,
         clock_text=(255, 100, 100),
         cell_bg=(4, 8, 20),
+        away_banner_outline=chrome,
+        home_banner_outline=chrome,
     )
 
 
@@ -186,16 +205,19 @@ def _ice_rink(assets_root, away_abbrev, home_abbrev,
     ICE_BG = (12, 22, 38)
     ICE_BLUE = (140, 200, 240)
     DEEP_ICE = (60, 120, 180)
+    chrome = (220, 230, 240)
     return RenderColors(
         background=ICE_BG,
         away_accent=DEEP_ICE,
         home_accent=ICE_BLUE,
-        chrome=(220, 230, 240),
+        chrome=chrome,
         score_text=(240, 248, 255),
         label_text=(220, 230, 240),
         period_value_text=(240, 248, 255),
         clock_text=(80, 200, 255),
         cell_bg=(20, 32, 52),
+        away_banner_outline=chrome,
+        home_banner_outline=chrome,
     )
 
 
@@ -216,6 +238,8 @@ def _heritage(assets_root, away_abbrev, home_abbrev,
         period_value_text=(245, 230, 200),
         clock_text=(200, 90, 60),
         cell_bg=(40, 30, 22),
+        away_banner_outline=WARM_BORDER,
+        home_banner_outline=WARM_BORDER,
     )
 
 
@@ -224,16 +248,19 @@ def _neon(assets_root, away_abbrev, home_abbrev,
     """Pure black bg, electric brights. Magenta/cyan, no team colors."""
     HOT_MAGENTA = (255, 50, 200)
     ELECTRIC_CYAN = (50, 230, 255)
+    chrome = (0, 255, 200)
     return RenderColors(
         background=(0, 0, 0),
         away_accent=HOT_MAGENTA,
         home_accent=ELECTRIC_CYAN,
-        chrome=(0, 255, 200),
+        chrome=chrome,
         score_text=(255, 255, 255),
         label_text=(0, 255, 200),
         period_value_text=(255, 255, 255),
         clock_text=(255, 50, 100),
         cell_bg=(0, 0, 0),
+        away_banner_outline=chrome,
+        home_banner_outline=chrome,
     )
 
 
@@ -243,16 +270,19 @@ def _stealth(assets_root, away_abbrev, home_abbrev,
     GRAPHITE = (24, 26, 30)
     LIGHT_STEEL = (210, 215, 225)
     DIM_STEEL = (140, 145, 155)
+    chrome = (90, 95, 105)
     return RenderColors(
         background=GRAPHITE,
         away_accent=LIGHT_STEEL,
         home_accent=DIM_STEEL,
-        chrome=(90, 95, 105),
+        chrome=chrome,
         score_text=(245, 245, 250),
         label_text=(170, 175, 185),
         period_value_text=(245, 245, 250),
         clock_text=(255, 80, 80),
         cell_bg=(34, 36, 42),
+        away_banner_outline=chrome,
+        home_banner_outline=chrome,
     )
 
 

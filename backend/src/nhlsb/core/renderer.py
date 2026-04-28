@@ -277,8 +277,8 @@ def render(project: Project, state: GameState,
     # All team-color roles use accents from the resolved theme.
     away_score_border  = rc.away_accent
     home_score_border  = rc.home_accent
-    away_banner_border = rc.chrome
-    home_banner_border = rc.chrome
+    away_banner_border = rc.away_banner_outline
+    home_banner_border = rc.home_banner_outline
     away_pen_border    = rc.away_accent
     home_pen_border    = rc.home_accent
     away_label_color   = rc.away_accent
