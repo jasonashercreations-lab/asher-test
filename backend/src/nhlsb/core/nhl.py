@@ -69,6 +69,13 @@ def fetch_game(game_id: int) -> GameState:
                 setattr(home, attr, int(entry.get("homeValue", 0)))
             except (TypeError, ValueError):
                 pass
+        # Bug 8: Face-off win percentage is a float in the API; convert to int
+        elif cat == "faceoffWinningPctg":
+            try:
+                away.faceoff_win_pct = int(round(float(entry.get("awayValue", 0)) * 100))
+                home.faceoff_win_pct = int(round(float(entry.get("homeValue", 0)) * 100))
+            except (TypeError, ValueError):
+                pass
 
     pinfo = pbp.get("periodDescriptor", {}) or {}
     period_num = pinfo.get("number", 1)

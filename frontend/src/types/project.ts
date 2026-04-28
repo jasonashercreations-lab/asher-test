@@ -11,7 +11,8 @@ export interface TeamState {
   pim: number;
   takeaways: number;
   giveaways: number;
-  penalty_active: boolean;
+  faceoff_win_pct: number;
+  penalty_remaining_sec: number;
 }
 
 export interface GameState {

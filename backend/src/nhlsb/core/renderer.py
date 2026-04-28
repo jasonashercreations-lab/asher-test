@@ -31,6 +31,45 @@ def _rect_fill(img, x0, y0, x1, y1, color):
             px[x, y] = color
 
 
+def _auto_fit_scale(font, text, max_w, max_h, max_scale=None):
+    """Bug 7: Pick the largest integer scale where `text` fits in (max_w, max_h).
+    Returns scale >= 1. If even scale=1 overflows, returns 1 anyway (caller
+    decides whether to clip).
+    """
+    if not text:
+        return 1
+    cap = max_scale if max_scale is not None else 64
+    for s in range(cap, 0, -1):
+        w, h = font.measure(text, scale=s)
+        if w <= max_w and h <= max_h:
+            return s
+    return 1
+
+
+def _fit_segment_size(text, max_w, max_h):
+    """Bug 7: Pick (digit_w, digit_h, gap) for 7-segment digits that fits in
+    the given box. Maintains the digit's natural aspect ratio (~0.62 w/h).
+    Returns (digit_w, digit_h, gap, thickness)."""
+    if not text:
+        return (max_w, max_h, 1, 1)
+    # Try heights from max down to a minimum, find the largest where width fits.
+    for digit_h in range(max_h, 4, -1):
+        digit_w = max(3, int(digit_h * 0.62))
+        gap = max(1, digit_w // 5)
+        # measure: same logic as seg.measure
+        total_w = 0
+        for ch in text:
+            if ch == ":":
+                total_w += max(1, digit_w // 8) + gap
+            else:
+                total_w += digit_w + gap
+        total_w = max(0, total_w - gap)
+        if total_w <= max_w:
+            thickness = max(1, digit_h // 7)
+            return (digit_w, digit_h, gap, thickness)
+    return (3, 5, 1, 1)
+
+
 def render(project: Project, state: GameState,
            assets_root: Path | None = None) -> Image.Image:
     L: Layout = project.layout
@@ -38,17 +77,40 @@ def render(project: Project, state: GameState,
     W, H = L.width, L.height
     img = Image.new("RGB", (W, H), T.bg.tuple())
 
-    # Compute vertical region boundaries from layout fractions
+    # Bug 7: Aspect-aware proportion adjustment.
+    # The default proportions assume ~1:1. At wide or tall aspects, we
+    # rebalance the vertical regions so content stays readable.
+    aspect = W / max(1, H)
+    score_h_frac = L.score_h
+    team_h_frac = L.team_h
+    pen_lbl_frac = L.pen_label_h
+    pen_box_frac = L.pen_box_h
+    clock_h_frac = L.clock_h
+    if aspect >= 1.5:
+        # Wide: shrink the top sections proportionally so stats get more room
+        s = 1.0 / aspect * 1.5    # at 1.5 -> 1.0, at 3.0 -> 0.5
+        score_h_frac *= s
+        team_h_frac  *= s
+        pen_lbl_frac *= s
+        pen_box_frac *= s
+        clock_h_frac *= s
+    elif aspect <= 0.7:
+        # Tall: stretch the top sections so they don't look tiny relative to stats
+        s = min(1.5, 0.7 / aspect)
+        score_h_frac = min(0.32, score_h_frac * s)
+        team_h_frac  = min(0.20, team_h_frac * s)
+
+    # Compute vertical region boundaries
     y0 = 0
     y_score_top = y0 + 2
-    y_score_bot = y0 + int(H * L.score_h)
+    y_score_bot = y0 + max(8, int(H * score_h_frac))
     y_team_top  = y_score_bot + 2
-    y_team_bot  = y_team_top + int(H * L.team_h)
+    y_team_bot  = y_team_top + max(6, int(H * team_h_frac))
     y_pen_top   = y_team_bot + 1
-    y_pen_lbl_b = y_pen_top + int(H * L.pen_label_h)
-    y_pen_box_b = y_pen_lbl_b + int(H * L.pen_box_h)
+    y_pen_lbl_b = y_pen_top + max(4, int(H * pen_lbl_frac))
+    y_pen_box_b = y_pen_lbl_b + max(4, int(H * pen_box_frac))
     y_clock_top = y_pen_box_b + 2
-    y_clock_bot = y_clock_top + int(H * L.clock_h)
+    y_clock_bot = y_clock_top + max(6, int(H * clock_h_frac))
     y_stats_top = y_clock_bot + 2
     y_stats_bot = H - 1
 
@@ -68,18 +130,17 @@ def render(project: Project, state: GameState,
     team_font = get_font(T.team_font)
 
     # ===== Score row =====
-    score_h = y_score_bot - y_score_top
-    digit_h = int(score_h * 0.92)
-    digit_w = int(digit_h * 0.62)
-    thickness = max(2, digit_h // 7)
+    score_h = max(0, y_score_bot - y_score_top)
     score_color = T.score_color.tuple()
+    half_w = (W // 2) - 4   # margin per side
 
     for half_x_start, half_x_end, score_val in [
         (0, x_mid, away_t.score),
         (x_mid, W, home_t.score),
     ]:
         s = f"{score_val:02d}"
-        gap = max(2, digit_w // 5)
+        cell_w = (half_x_end - half_x_start) - 6
+        digit_w, digit_h, gap, thickness = _fit_segment_size(s, cell_w, score_h - 4)
         total_w = len(s) * digit_w + (len(s) - 1) * gap
         x_o = half_x_start + (half_x_end - half_x_start - total_w) // 2
         y_o = y_score_top + (score_h - digit_h) // 2
@@ -94,16 +155,18 @@ def render(project: Project, state: GameState,
     _vline(img, x_mid, y_score_top - 2, y_score_bot + 1, grid_score)
 
     # ===== Team labels =====
-    team_h_px = y_team_bot - y_team_top
-    abbr_scale = max(1, team_h_px // 9)
+    team_h_px = max(0, y_team_bot - y_team_top)
     team_color = T.team_color.tuple()
-    aw, ah = team_font.measure(away_t.abbrev, scale=abbr_scale)
-    hw, hh = team_font.measure(home_t.abbrev, scale=abbr_scale)
+    abbr_cell_w = (x_mid - 4)
+    abbr_scale_a = _auto_fit_scale(team_font, away_t.abbrev, abbr_cell_w, team_h_px - 2)
+    abbr_scale_h = _auto_fit_scale(team_font, home_t.abbrev, abbr_cell_w, team_h_px - 2)
+    aw, ah = team_font.measure(away_t.abbrev, scale=abbr_scale_a)
+    hw, hh = team_font.measure(home_t.abbrev, scale=abbr_scale_h)
     team_font.draw(img, (x_mid - aw) // 2, y_team_top + (team_h_px - ah) // 2,
-                   away_t.abbrev, team_color, scale=abbr_scale)
+                   away_t.abbrev, team_color, scale=abbr_scale_a)
     team_font.draw(img, x_mid + (W - x_mid - hw) // 2,
                    y_team_top + (team_h_px - hh) // 2,
-                   home_t.abbrev, team_color, scale=abbr_scale)
+                   home_t.abbrev, team_color, scale=abbr_scale_h)
 
     grid = T.grid.tuple()
     _hline(img, 0, W, y_team_bot, grid)
@@ -112,8 +175,7 @@ def render(project: Project, state: GameState,
     _vline(img, W - 1, y_team_top, y_team_bot, grid)
 
     # ===== PEN. | period | PEN. =====
-    pen_h_px = y_pen_lbl_b - y_pen_top
-    lbl_scale = max(1, pen_h_px // 9)
+    pen_h_px = max(0, y_pen_lbl_b - y_pen_top)
     period_color = T.period_color.tuple()
 
     if L.show_pen_indicators:
@@ -124,19 +186,23 @@ def render(project: Project, state: GameState,
         x_pen_r_start = W
 
     if L.show_pen_indicators:
+        pen_label_cell_w = max(0, x_pen_l_end - 4)
+        pen_lbl_scale = _auto_fit_scale(label_font, "PEN.", pen_label_cell_w, pen_h_px - 2)
         for x_center, label in [
             (x_pen_l_end // 2, "PEN."),
             ((x_pen_r_start + W) // 2, "PEN."),
         ]:
-            tw, th = label_font.measure(label, scale=lbl_scale)
+            tw, th = label_font.measure(label, scale=pen_lbl_scale)
             label_font.draw(img, x_center - tw // 2,
                             y_pen_top + (pen_h_px - th) // 2,
-                            label, team_color, scale=lbl_scale)
+                            label, team_color, scale=pen_lbl_scale)
 
-    pcw, pch = label_font.measure(state.period_label, scale=lbl_scale)
+    period_cell_w = max(0, x_pen_r_start - x_pen_l_end - 4)
+    period_scale = _auto_fit_scale(label_font, state.period_label, period_cell_w, pen_h_px - 2)
+    pcw, pch = label_font.measure(state.period_label, scale=period_scale)
     label_font.draw(img, (x_pen_l_end + x_pen_r_start) // 2 - pcw // 2,
                     y_pen_top + (pen_h_px - pch) // 2,
-                    state.period_label, period_color, scale=lbl_scale)
+                    state.period_label, period_color, scale=period_scale)
 
     _hline(img, 0, W, y_pen_lbl_b, grid)
     if L.show_pen_indicators:
@@ -153,8 +219,7 @@ def render(project: Project, state: GameState,
                 return ""
             return f"{secs // 60}:{secs % 60:02d}"
 
-        pen_box_h = y_pen_box_b - y_pen_lbl_b
-        pen_text_scale = max(1, pen_box_h // 9)
+        pen_box_h = max(0, y_pen_box_b - y_pen_lbl_b)
         pen_color = T.penalty_active_color.tuple()
 
         for x0, x1, secs in [
@@ -164,17 +229,16 @@ def render(project: Project, state: GameState,
             txt = _fmt_pen(secs)
             if not txt:
                 continue
-            tw, th = label_font.measure(txt, scale=pen_text_scale)
+            cell_w = max(0, x1 - x0 - 2)
+            ts = _auto_fit_scale(label_font, txt, cell_w, pen_box_h - 2)
+            tw, th = label_font.measure(txt, scale=ts)
             cx = (x0 + x1) // 2
             cy = y_pen_lbl_b + (pen_box_h - th) // 2
-            label_font.draw(img, cx - tw // 2, cy, txt, pen_color, scale=pen_text_scale)
+            label_font.draw(img, cx - tw // 2, cy, txt, pen_color, scale=ts)
 
     # ===== Clock =====
-    clock_h_px = y_clock_bot - y_clock_top
-    cdh = int(clock_h_px * 0.92)
-    cdw = int(cdh * 0.55)
-    cthick = max(2, cdh // 7)
-    cgap = max(2, cdw // 5)
+    clock_h_px = max(0, y_clock_bot - y_clock_top)
+    cdw, cdh, cgap, cthick = _fit_segment_size(state.clock, W - 8, clock_h_px - 4)
     cw = seg.measure(state.clock, cdw, gap=cgap)
     cx = (W - cw) // 2
     cy = y_clock_top + (clock_h_px - cdh) // 2
@@ -202,27 +266,37 @@ def render(project: Project, state: GameState,
         _vline(img, 0, y_stats_top, y_stats_bot + 1, grid)
         _vline(img, W - 1, y_stats_top, y_stats_bot + 1, grid)
 
-        val_scale = max(1, row_h // 9)
         val_color = T.stat_value_color.tuple()
         lbl_color = T.stat_label_color.tuple()
+
+        # Helper: format value with % suffix for percentage-style fields
+        def _fmt_stat(field, raw):
+            if field.endswith("_pct") or field == "faceoff_win_pct":
+                try:
+                    return f"{int(raw)}%"
+                except (TypeError, ValueError):
+                    return str(raw)
+            return str(raw)
 
         for i, row in enumerate(visible_stats):
             ry0 = y_stats_top + i * row_h
             if i > 0:
                 _hline(img, x_stats_left, x_stats_right, ry0, grid)
 
-            text_y = ry0 + (row_h - val_scale * 7) // 2
-            a_val = str(getattr(away_t, row.field, ""))
-            h_val = str(getattr(home_t, row.field, ""))
+            a_val = _fmt_stat(row.field, getattr(away_t, row.field, ""))
+            h_val = _fmt_stat(row.field, getattr(home_t, row.field, ""))
 
-            for x_center, val, color in [
-                ((x_stat_a + x_stat_label) // 2, a_val, val_color),
-                ((x_stat_label + x_stat_h) // 2, row.label, lbl_color),
-                ((x_stat_h + x_stats_right) // 2, h_val, val_color),
-            ]:
-                tw, th = label_font.measure(val, scale=val_scale)
+            cells = [
+                ((x_stat_a + x_stat_label) // 2, a_val, val_color, val_col_w - 4),
+                ((x_stat_label + x_stat_h) // 2, row.label, lbl_color, label_col_w - 4),
+                ((x_stat_h + x_stats_right) // 2, h_val, val_color, val_col_w - 4),
+            ]
+            for x_center, val, color, cell_w in cells:
+                s = _auto_fit_scale(label_font, val, max(1, cell_w), max(1, row_h - 2))
+                tw, th = label_font.measure(val, scale=s)
+                text_y = ry0 + (row_h - th) // 2
                 label_font.draw(img, x_center - tw // 2, text_y,
-                                val, color, scale=val_scale)
+                                val, color, scale=s)
 
     # ===== Sprites =====
     if L.show_sprites and sprite_w_px > 0:
@@ -230,9 +304,14 @@ def render(project: Project, state: GameState,
 
         def _draw_team_sprite(x_origin: int, abbr: str, colors, override):
             asset_img = None
+            # Tier 1: user-uploaded override via Teams panel
             if override and override.sprite_asset and assets_root:
                 p = assets_root / "sprites" / override.sprite_asset
                 asset_img = sprites.load_sprite_asset(p)
+            # Tier 2: bundled per-team PNG at assets/sprites/teams/<ABBREV>.png
+            if asset_img is None and assets_root:
+                asset_img = sprites.load_team_sprite(assets_root, abbr)
+            # Tier 3: procedural pixel art tinted to team colors
             if asset_img is None:
                 pixels = project.sprite.pixels or sprites.DEFAULT_PIXELS
                 p_, s_, e_ = colors

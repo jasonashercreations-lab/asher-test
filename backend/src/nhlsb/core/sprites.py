@@ -1,11 +1,17 @@
 """Sprite renderer. Supports procedural pixel-art sprites and PNG overrides.
-Per-team overrides come from Project.team_overrides[abbrev].sprite_asset.
+
+Sprite resolution order (highest priority first):
+  1. Project team override (team_overrides[abbrev].sprite_asset)
+     - Uploaded by user via Teams panel; lives in assets/sprites/<filename>
+  2. Bundled per-team PNG (assets/sprites/teams/<ABBREV>.png)
+     - Shipped with the app; ABBREV must match the official 3-letter code
+  3. Procedural pixel-art default (DEFAULT_PIXELS), tinted to team colors
 """
 from __future__ import annotations
 from pathlib import Path
 from PIL import Image
 
-# Default 13x20 sprite
+# Default 13x20 sprite, hand-drawn pixel art
 DEFAULT_PIXELS = [
     "....FFFFF....",
     "....FFFFF....",
@@ -68,6 +74,16 @@ def load_sprite_asset(asset_path: Path) -> Image.Image | None:
         return None
 
 
+def load_team_sprite(assets_root: Path, abbrev: str) -> Image.Image | None:
+    """Bug 10: Look for a bundled per-team PNG at assets/sprites/teams/<ABBREV>.png.
+    Returns None if not found, so the renderer falls through to procedural.
+    """
+    if not assets_root or not abbrev:
+        return None
+    candidate = assets_root / "sprites" / "teams" / f"{abbrev.upper()}.png"
+    return load_sprite_asset(candidate)
+
+
 def fit_sprite(sprite: Image.Image, target_w: int, target_h: int) -> Image.Image:
     """Fit a sprite inside (target_w, target_h) preserving aspect ratio.
     - If smaller than target: integer upscale (keeps pixel art crisp).
@@ -76,7 +92,6 @@ def fit_sprite(sprite: Image.Image, target_w: int, target_h: int) -> Image.Image
     if sprite.width == 0 or sprite.height == 0 or target_w <= 0 or target_h <= 0:
         return sprite
 
-    # Already fits at native size
     if sprite.width <= target_w and sprite.height <= target_h:
         sx = max(1, target_w // sprite.width)
         sy = max(1, target_h // sprite.height)
@@ -85,7 +100,6 @@ def fit_sprite(sprite: Image.Image, target_w: int, target_h: int) -> Image.Image
             return sprite
         return sprite.resize((sprite.width * s, sprite.height * s), Image.NEAREST)
 
-    # Too big - downscale by aspect-preserving ratio
     ratio = min(target_w / sprite.width, target_h / sprite.height)
     new_w = max(1, int(sprite.width * ratio))
     new_h = max(1, int(sprite.height * ratio))

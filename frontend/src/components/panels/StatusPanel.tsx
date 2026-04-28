@@ -50,7 +50,7 @@ export function StatusPanel() {
           </div>
 
           <div className="text-muted col-span-3 mt-2 mb-1 text-[10px] uppercase">Stats</div>
-          {(['shots', 'hits', 'blocks', 'pim', 'takeaways', 'giveaways'] as const).map((k) => (
+          {(['shots', 'hits', 'blocks', 'pim', 'takeaways', 'giveaways', 'faceoff_win_pct'] as const).map((k) => (
             <FragRow key={k} label={k}
               away={status.current_state.away[k]}
               home={status.current_state.home[k]}

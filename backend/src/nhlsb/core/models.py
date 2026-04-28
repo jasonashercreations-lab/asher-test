@@ -33,6 +33,8 @@ class TeamState(BaseModel):
     pim: int = 0
     takeaways: int = 0
     giveaways: int = 0
+    # Face-off win percentage (0-100, integer for clean display)
+    faceoff_win_pct: int = 0
     # Penalty time remaining for this team's active power-play OPPONENT.
     # 0 = no active penalty. Seconds remaining for the renderer to format M:SS.
     penalty_remaining_sec: int = 0
@@ -99,12 +101,13 @@ class Layout(BaseModel):
 
     # Stats rows (order is render order)
     stats: list[StatRow] = Field(default_factory=lambda: [
-        StatRow(field="shots",     label="SHOTS"),
-        StatRow(field="hits",      label="HITS"),
-        StatRow(field="blocks",    label="BLOCKS"),
-        StatRow(field="pim",       label="PIM"),
-        StatRow(field="takeaways", label="T.AWAYS"),
-        StatRow(field="giveaways", label="G.AWAYS"),
+        StatRow(field="shots",            label="SHOTS"),
+        StatRow(field="hits",             label="HITS"),
+        StatRow(field="blocks",           label="BLOCKS"),
+        StatRow(field="pim",              label="PIM"),
+        StatRow(field="takeaways",        label="T.AWAYS"),
+        StatRow(field="giveaways",        label="G.AWAYS"),
+        StatRow(field="faceoff_win_pct",  label="FO%",      enabled=False),
     ])
 
 
