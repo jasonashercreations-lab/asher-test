@@ -1,45 +1,56 @@
 ================================================================
-  FIX: TAURI NSIS CONFIG ERROR
+  3-FIX UPDATE
 ================================================================
 
-The build failed because tauri.conf.json had:
+1. PREVIEW AUTO-FITS THE SCREEN
+   The zoom buttons (1x, 2x, 3x...) are gone. The preview now
+   always fits the available pane size while preserving aspect
+   ratio. Resize the window and the preview rescales automatically.
 
-  - "nsis" listed as a build target
-  - A windows.nsis block with "installerHooks"
+2. HIGH QUALITY AT ALL RESOLUTIONS
+   Frames are still rendered at full project resolution (e.g.
+   1080x1350) on the backend. The browser downscales them with
+   high-quality smoothing instead of pixel-scaling, so the
+   preview is sharp at any pane size with no blurriness.
 
-Tauri 1.6 doesn't support installerHooks (it was added in
-Tauri 2.0). And we don't want NSIS at all - we ship MSI.
+3. BANNER NAMING INVERTED
+   New convention - the suffix describes which DISPLAY SIDE the
+   banner is meant for, not the team's role:
 
-Both have been removed. The config now only builds MSI.
+       <ABBR>_HOME.png   shown on the LEFT of the scoreboard
+                         (used when the team is the AWAY team)
 
-The orphaned desktop/src-tauri/installer/installer.nsi file
-has also been deleted since nothing references it now.
+       <ABBR>_AWAY.png   shown on the RIGHT of the scoreboard
+                         (used when the team is the HOME team)
+
+   For NYR @ BUF: NYR_HOME.png loads on the left, BUF_AWAY.png
+   loads on the right.
+
+   Existing demo files renamed to match. Drop your own banners
+   in assets/banners/teams/ following this convention.
 
 ================================================================
   HOW TO RE-UPLOAD
 ================================================================
 
 1. Unzip somewhere temporary.
-
 2. View -> Show -> Hidden items so .github folder is visible.
+3. CRITICAL: also delete your old demo banner files first so the
+   renamed versions take cleanly:
 
-3. CRITICAL: also delete your local installer folder before
-   replacing files (Windows won't auto-delete folders that
-   exist locally but not in the zip):
-
-     File Explorer -> nhl-scoreboard\desktop\src-tauri\installer
-     Right-click -> Delete
+     File Explorer -> nhl-scoreboard\assets\banners\teams\
+     Delete: NYR_AWAY.png, BUF_HOME.png (if they exist)
 
 4. Drag everything inside the unzipped folder onto your local
    nhl-scoreboard folder. Replace all when asked.
 
-5. Verify desktop/src-tauri/tauri.conf.json:
-   "targets" should only list ["msi"]
-   No "nsis" anywhere
-   No "installerHooks" anywhere
+5. Verify the banner folder now has:
+     NYR_HOME.png   (was NYR_AWAY.png before)
+     BUF_AWAY.png   (was BUF_HOME.png before)
+     NYR.png and BUF.png (legacy fallbacks)
 
 6. GitHub Desktop:
-     Summary: "fix: remove nsis target + installerHooks (tauri 1.6)"
+     Summary: "preview auto-fit + sharper rendering + banner naming inversion"
      Commit + Push
 
 7. Wait ~10 min for the new .msi.
