@@ -1,4 +1,4 @@
-{
+﻿{
   "$schema": "https://schema.tauri.app/config/1",
   "build": {
     "beforeBuildCommand": "",
@@ -34,10 +34,6 @@
         "icons/icon.icns"
       ],
       "windows": {
-        "wix": {
-          "language": ["en-US"],
-          "upgradeCode": "B5F7E80A-3D9F-4E8C-9A2B-1E5C8D4F6A12"
-        },
         "nsis": {
           "installMode": "currentUser"
         }
@@ -58,3 +54,5 @@
     }
   }
 }
+
+
