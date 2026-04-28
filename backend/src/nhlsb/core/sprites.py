@@ -69,12 +69,24 @@ def load_sprite_asset(asset_path: Path) -> Image.Image | None:
 
 
 def fit_sprite(sprite: Image.Image, target_w: int, target_h: int) -> Image.Image:
-    """Integer-scale a sprite to fit inside (target_w, target_h) preserving aspect."""
-    if sprite.width == 0 or sprite.height == 0:
+    """Fit a sprite inside (target_w, target_h) preserving aspect ratio.
+    - If smaller than target: integer upscale (keeps pixel art crisp).
+    - If larger than target: downscale to fit (nearest-neighbor, no blur).
+    """
+    if sprite.width == 0 or sprite.height == 0 or target_w <= 0 or target_h <= 0:
         return sprite
-    sx = max(1, target_w // sprite.width)
-    sy = max(1, target_h // sprite.height)
-    s = min(sx, sy)
-    if s == 1 and sprite.width <= target_w and sprite.height <= target_h:
-        return sprite
-    return sprite.resize((sprite.width * s, sprite.height * s), Image.NEAREST)
+
+    # Already fits at native size
+    if sprite.width <= target_w and sprite.height <= target_h:
+        sx = max(1, target_w // sprite.width)
+        sy = max(1, target_h // sprite.height)
+        s = min(sx, sy)
+        if s == 1:
+            return sprite
+        return sprite.resize((sprite.width * s, sprite.height * s), Image.NEAREST)
+
+    # Too big - downscale by aspect-preserving ratio
+    ratio = min(target_w / sprite.width, target_h / sprite.height)
+    new_w = max(1, int(sprite.width * ratio))
+    new_h = max(1, int(sprite.height * ratio))
+    return sprite.resize((new_w, new_h), Image.NEAREST)

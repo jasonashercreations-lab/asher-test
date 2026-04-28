@@ -33,7 +33,9 @@ class TeamState(BaseModel):
     pim: int = 0
     takeaways: int = 0
     giveaways: int = 0
-    penalty_active: bool = False
+    # Penalty time remaining for this team's active power-play OPPONENT.
+    # 0 = no active penalty. Seconds remaining for the renderer to format M:SS.
+    penalty_remaining_sec: int = 0
 
 
 class GameState(BaseModel):

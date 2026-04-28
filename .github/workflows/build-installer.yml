@@ -72,6 +72,7 @@ jobs:
             --hidden-import nhlsb.runtime `
             --hidden-import nhlsb.project `
             --add-data "..\assets;assets" `
+            --add-data "..\frontend\dist;frontend_dist" `
             src\nhlsb\__main__.py
           New-Item -ItemType Directory -Force -Path ..\desktop\src-tauri\binaries
           Copy-Item dist\nhlsb-server-x86_64-pc-windows-msvc.exe ..\desktop\src-tauri\binaries\

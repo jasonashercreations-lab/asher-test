@@ -146,12 +146,28 @@ def render(project: Project, state: GameState,
     _vline(img, W - 1, y_team_bot, y_pen_box_b, grid)
 
     if L.show_pen_indicators:
-        if away_t.penalty_active:
-            _rect_fill(img, 2, y_pen_lbl_b + 2, x_pen_l_end - 1,
-                       y_pen_box_b - 1, T.penalty_active_color.tuple())
-        if home_t.penalty_active:
-            _rect_fill(img, x_pen_r_start + 1, y_pen_lbl_b + 2, W - 2,
-                       y_pen_box_b - 1, T.penalty_active_color.tuple())
+        # Bug 2: Show "M:SS" countdown text in the penalty box instead of a
+        # solid bar. Blank when no penalty active.
+        def _fmt_pen(secs: int) -> str:
+            if secs <= 0:
+                return ""
+            return f"{secs // 60}:{secs % 60:02d}"
+
+        pen_box_h = y_pen_box_b - y_pen_lbl_b
+        pen_text_scale = max(1, pen_box_h // 9)
+        pen_color = T.penalty_active_color.tuple()
+
+        for x0, x1, secs in [
+            (2, x_pen_l_end - 1, away_t.penalty_remaining_sec),
+            (x_pen_r_start + 1, W - 2, home_t.penalty_remaining_sec),
+        ]:
+            txt = _fmt_pen(secs)
+            if not txt:
+                continue
+            tw, th = label_font.measure(txt, scale=pen_text_scale)
+            cx = (x0 + x1) // 2
+            cy = y_pen_lbl_b + (pen_box_h - th) // 2
+            label_font.draw(img, cx - tw // 2, cy, txt, pen_color, scale=pen_text_scale)
 
     # ===== Clock =====
     clock_h_px = y_clock_bot - y_clock_top

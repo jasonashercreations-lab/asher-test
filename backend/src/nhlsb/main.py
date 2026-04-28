@@ -40,7 +40,10 @@ def _resolve_paths():
             user_root = Path(os.environ.get("XDG_DATA_HOME",
                                             Path.home() / ".local" / "share")) / "nhlsb"
         projects = user_root / "projects"
-        frontend = None        # Tauri serves it
+        # Bug 3: also serve the frontend in bundled mode so external browsers
+        # can hit /#/scoreboard for fullscreen output windows on second monitors.
+        candidate = bundle / "frontend_dist"
+        frontend = candidate if candidate.exists() else None
     else:
         # Source mode
         here = Path(__file__).resolve().parent
