@@ -2,6 +2,20 @@ import { useProjectStore } from '@/store/project';
 import { Section, Field, ColorField, Select } from '@/components/ui/primitives';
 import type { Theme } from '@/types/project';
 
+const COLOR_THEMES: { id: ColorThemeName; label: string; description: string }[] = [
+  { id: 'csv_default',      label: 'CSV Default',      description: 'Curated colors per matchup (recommended)' },
+  { id: 'classic_bordered', label: 'Classic Bordered', description: 'Bright team primaries, classic look' },
+  { id: 'midnight',         label: 'Midnight',         description: 'Deep navy + gold premium look' },
+  { id: 'ice_rink',         label: 'Ice Rink',         description: 'Light arctic palette' },
+  { id: 'heritage',         label: 'Heritage',         description: 'Sepia/warm vintage' },
+  { id: 'neon',             label: 'Neon',             description: 'Electric arcade brights' },
+  { id: 'stealth',          label: 'Stealth',          description: 'Graphite monochrome with team accents' },
+];
+
+type ColorThemeName =
+  | 'csv_default' | 'classic_bordered' | 'midnight'
+  | 'ice_rink' | 'heritage' | 'neon' | 'stealth';
+
 const COLOR_FIELDS: { key: keyof Theme; label: string }[] = [
   { key: 'bg',                   label: 'Background' },
   { key: 'grid',                 label: 'Grid lines' },
@@ -20,10 +34,38 @@ export function ThemePanel() {
   const update = useProjectStore((s) => s.updateProject);
   if (!project) return null;
   const t = project.theme;
+  const currentTheme = (project as any).color_theme ?? 'csv_default';
 
   return (
     <div>
-      <Section title="Colors">
+      <Section title="Color Theme">
+        <div className="text-xs text-muted-foreground mb-2">
+          Pick a color preset. CSV Default uses per-matchup curated colors.
+          The others apply a fixed palette regardless of teams.
+        </div>
+        <div className="grid grid-cols-1 gap-1.5">
+          {COLOR_THEMES.map((theme) => (
+            <button
+              key={theme.id}
+              onClick={() => update((p) => { (p as any).color_theme = theme.id; })}
+              className={`px-3 py-2 text-left rounded-md border ${
+                currentTheme === theme.id
+                  ? 'border-blue-500 bg-blue-500/10'
+                  : 'border-border bg-panel-2 hover:bg-border'
+              }`}
+            >
+              <div className="text-sm font-medium">{theme.label}</div>
+              <div className="text-xs text-muted-foreground">{theme.description}</div>
+            </button>
+          ))}
+        </div>
+      </Section>
+
+      <Section title="Detail Colors (advanced)">
+        <div className="text-xs text-muted-foreground mb-2">
+          These per-element overrides apply on top of the selected theme.
+          Most users should leave these alone.
+        </div>
         {COLOR_FIELDS.map(({ key, label }) => (
           <Field key={key} label={label}>
             <ColorField
@@ -56,57 +98,6 @@ export function ThemePanel() {
           </Select>
         </Field>
       </Section>
-
-      <Section title="Presets">
-        <div className="grid grid-cols-2 gap-1.5">
-          <PresetButton name="Classic" onClick={() => update((p) => Object.assign(p.theme, CLASSIC))} />
-          <PresetButton name="Neon" onClick={() => update((p) => Object.assign(p.theme, NEON))} />
-          <PresetButton name="Mono" onClick={() => update((p) => Object.assign(p.theme, MONO))} />
-          <PresetButton name="Retro" onClick={() => update((p) => Object.assign(p.theme, RETRO))} />
-        </div>
-      </Section>
     </div>
   );
 }
-
-function PresetButton({ name, onClick }: { name: string; onClick: () => void }) {
-  return (
-    <button
-      onClick={onClick}
-      className="px-2 py-1.5 text-xs rounded-md border border-border bg-panel-2 hover:bg-border"
-    >
-      {name}
-    </button>
-  );
-}
-
-const rgb = (r: number, g: number, b: number) => ({ r, g, b });
-
-const CLASSIC: Partial<Theme> = {
-  bg: rgb(0, 0, 0), grid: rgb(255, 255, 255), grid_score: rgb(255, 200, 0),
-  score_color: rgb(255, 200, 0), team_color: rgb(255, 255, 255),
-  period_color: rgb(255, 255, 255), clock_color: rgb(255, 200, 0),
-  stat_value_color: rgb(255, 200, 0), stat_label_color: rgb(255, 255, 255),
-  penalty_active_color: rgb(255, 90, 0),
-};
-const NEON: Partial<Theme> = {
-  bg: rgb(8, 0, 30), grid: rgb(0, 255, 200), grid_score: rgb(255, 0, 200),
-  score_color: rgb(255, 0, 200), team_color: rgb(0, 255, 200),
-  period_color: rgb(180, 255, 255), clock_color: rgb(0, 255, 200),
-  stat_value_color: rgb(255, 0, 200), stat_label_color: rgb(0, 255, 200),
-  penalty_active_color: rgb(255, 60, 60),
-};
-const MONO: Partial<Theme> = {
-  bg: rgb(0, 0, 0), grid: rgb(180, 180, 180), grid_score: rgb(255, 255, 255),
-  score_color: rgb(255, 255, 255), team_color: rgb(255, 255, 255),
-  period_color: rgb(220, 220, 220), clock_color: rgb(255, 255, 255),
-  stat_value_color: rgb(255, 255, 255), stat_label_color: rgb(180, 180, 180),
-  penalty_active_color: rgb(255, 80, 80),
-};
-const RETRO: Partial<Theme> = {
-  bg: rgb(15, 35, 25), grid: rgb(150, 220, 90), grid_score: rgb(220, 250, 100),
-  score_color: rgb(220, 250, 100), team_color: rgb(150, 220, 90),
-  period_color: rgb(180, 220, 120), clock_color: rgb(220, 250, 100),
-  stat_value_color: rgb(220, 250, 100), stat_label_color: rgb(150, 220, 90),
-  penalty_active_color: rgb(255, 120, 0),
-};

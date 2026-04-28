@@ -1,4 +1,12 @@
-"""Built-in NHL team color palette. Per-team overrides live in the project."""
+"""Built-in NHL team color palette aligned with the user's design spec.
+
+Each team has:
+  - main color    (dominant identity color)
+  - secondary     (accent / highlight)
+  - emblem        (kept for backward compatibility, defaults to white)
+
+Colors below match the official NHL team color guide.
+"""
 from __future__ import annotations
 from .models import RGB
 
@@ -6,43 +14,56 @@ from .models import RGB
 def _c(r, g, b): return RGB(r=r, g=g, b=b)
 
 
-# (primary, secondary, emblem)
+# Reusable named colors
+WHITE  = _c(255, 255, 255)
+BLACK  = _c(10, 10, 10)
+SILVER = _c(168, 169, 173)
+
+
+# (main, secondary, emblem)
 TEAMS = {
-    "ANA": (_c(252, 76, 2),    _c(185, 151, 91),  _c(0, 0, 0)),
-    "BOS": (_c(252, 181, 20),  _c(0, 0, 0),       _c(0, 0, 0)),
-    "BUF": (_c(0, 38, 84),     _c(252, 181, 20),  _c(252, 181, 20)),
-    "CAR": (_c(206, 17, 38),   _c(255, 255, 255), _c(0, 0, 0)),
-    "CBJ": (_c(0, 38, 84),     _c(206, 17, 38),   _c(255, 255, 255)),
-    "CGY": (_c(210, 0, 28),    _c(250, 175, 25),  _c(255, 255, 255)),
-    "CHI": (_c(207, 10, 44),   _c(0, 0, 0),       _c(255, 199, 44)),
-    "COL": (_c(111, 38, 61),   _c(35, 97, 146),   _c(164, 167, 159)),
-    "DAL": (_c(0, 104, 71),    _c(143, 143, 140), _c(0, 0, 0)),
-    "DET": (_c(206, 17, 38),   _c(255, 255, 255), _c(255, 255, 255)),
-    "EDM": (_c(4, 30, 66),     _c(252, 76, 0),    _c(252, 76, 0)),
-    "FLA": (_c(4, 30, 66),     _c(200, 16, 46),   _c(185, 151, 91)),
-    "LAK": (_c(17, 17, 17),    _c(162, 170, 173), _c(255, 255, 255)),
-    "MIN": (_c(21, 71, 52),    _c(175, 35, 36),   _c(235, 175, 53)),
-    "MTL": (_c(175, 30, 45),   _c(25, 33, 104),   _c(255, 255, 255)),
-    "NJD": (_c(206, 17, 38),   _c(0, 0, 0),       _c(255, 255, 255)),
-    "NSH": (_c(255, 184, 28),  _c(4, 30, 66),     _c(4, 30, 66)),
-    "NYI": (_c(0, 83, 155),    _c(244, 125, 48),  _c(255, 255, 255)),
-    "NYR": (_c(0, 56, 168),    _c(206, 17, 38),   _c(255, 255, 255)),
-    "OTT": (_c(0, 0, 0),       _c(218, 26, 50),   _c(193, 132, 47)),
-    "PHI": (_c(247, 73, 2),    _c(0, 0, 0),       _c(0, 0, 0)),
-    "PIT": (_c(0, 0, 0),       _c(252, 181, 20),  _c(252, 181, 20)),
-    "SEA": (_c(0, 22, 40),     _c(153, 217, 217), _c(104, 162, 185)),
-    "SJS": (_c(0, 109, 117),   _c(234, 114, 0),   _c(0, 0, 0)),
-    "STL": (_c(0, 47, 135),    _c(252, 181, 20),  _c(252, 181, 20)),
-    "TBL": (_c(0, 40, 104),    _c(255, 255, 255), _c(255, 255, 255)),
-    "TOR": (_c(0, 32, 91),     _c(255, 255, 255), _c(255, 255, 255)),
-    "UTA": (_c(105, 179, 231), _c(10, 10, 10),    _c(255, 255, 255)),
-    "VAN": (_c(0, 32, 91),     _c(4, 30, 66),     _c(151, 153, 155)),
-    "VGK": (_c(185, 151, 91),  _c(51, 63, 66),    _c(255, 255, 255)),
-    "WPG": (_c(4, 30, 66),     _c(172, 22, 44),   _c(255, 255, 255)),
-    "WSH": (_c(200, 16, 46),   _c(4, 30, 66),     _c(4, 30, 66)),
+    # Pacific
+    "ANA": (_c(252, 76, 2),    BLACK,             WHITE),    # Orange / Black
+    "CGY": (_c(200, 16, 46),   _c(241, 190, 72),  WHITE),    # Red / Yellow
+    "EDM": (_c(252, 76, 2),    _c(4, 30, 66),     WHITE),    # Orange / Royal Blue
+    "LAK": (BLACK,             SILVER,            WHITE),    # Black / Silver
+    "SEA": (_c(0, 22, 40),     _c(153, 217, 217), WHITE),    # Deep Sea Blue / Ice Blue
+    "SJS": (_c(0, 109, 117),   BLACK,             WHITE),    # Teal / Black
+    "VAN": (_c(0, 32, 91),     _c(0, 132, 61),    WHITE),    # Blue / Green
+    "VGK": (_c(185, 151, 91),  BLACK,             WHITE),    # Gold / Black
+
+    # Central
+    "CHI": (_c(207, 10, 44),   BLACK,             WHITE),    # Red / Black
+    "COL": (_c(111, 38, 61),   _c(35, 97, 146),   WHITE),    # Burgundy / Blue
+    "DAL": (_c(0, 104, 71),    BLACK,             WHITE),    # Green / Black
+    "MIN": (_c(21, 71, 52),    _c(175, 35, 36),   WHITE),    # Green / Red
+    "NSH": (_c(255, 184, 28),  _c(4, 30, 66),     WHITE),    # Gold / Navy Blue
+    "STL": (_c(0, 47, 135),    _c(252, 181, 20),  WHITE),    # Blue / Yellow
+    "UTA": (BLACK,             _c(105, 179, 231), WHITE),    # Black / Mountain Blue
+    "WPG": (_c(4, 30, 66),     _c(140, 200, 230), WHITE),    # Navy Blue / Light Blue
+
+    # Atlantic
+    "BOS": (BLACK,             _c(252, 181, 20),  WHITE),    # Black / Gold
+    "BUF": (_c(0, 38, 84),     _c(252, 181, 20),  WHITE),    # Royal Blue / Gold
+    "DET": (_c(206, 17, 38),   WHITE,             WHITE),    # Red / White
+    "FLA": (_c(206, 17, 38),   _c(4, 30, 66),     WHITE),    # Red / Navy Blue
+    "MTL": (_c(175, 30, 45),   _c(25, 33, 104),   WHITE),    # Red / Blue
+    "OTT": (BLACK,             _c(218, 26, 50),   WHITE),    # Black / Red
+    "TBL": (_c(0, 40, 104),    WHITE,             WHITE),    # Blue / White
+    "TOR": (_c(0, 32, 91),     WHITE,             WHITE),    # Blue / White
+
+    # Metropolitan
+    "CAR": (_c(206, 17, 38),   BLACK,             WHITE),    # Red / Black
+    "CBJ": (_c(0, 38, 84),     _c(206, 17, 38),   WHITE),    # Navy Blue / Red
+    "NJD": (_c(206, 17, 38),   BLACK,             WHITE),    # Red / Black
+    "NYI": (_c(0, 83, 155),    _c(244, 125, 48),  WHITE),    # Royal Blue / Orange
+    "NYR": (_c(0, 56, 168),    _c(206, 17, 38),   WHITE),    # Blue / Red
+    "PHI": (_c(247, 73, 2),    BLACK,             WHITE),    # Orange / Black
+    "PIT": (BLACK,             _c(252, 181, 20),  WHITE),    # Black / Gold
+    "WSH": (_c(206, 17, 38),   _c(4, 30, 66),     WHITE),    # Red / Navy Blue
 }
 
-DEFAULT = (_c(128, 128, 128), _c(200, 200, 200), _c(50, 50, 50))
+DEFAULT = (_c(128, 128, 128), _c(200, 200, 200), WHITE)
 
 
 def colors_for(abbrev: str, override=None) -> tuple[RGB, RGB, RGB]:

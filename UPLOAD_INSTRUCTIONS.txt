@@ -1,0 +1,77 @@
+================================================================
+  COLOR OVERHAUL: 7 THEMES + NEW MATCHUP CSV
+================================================================
+
+A full color-system overhaul. The renderer now resolves colors
+through a theme module, with 7 presets to pick from in the UI.
+
+================================================================
+  THEMES
+================================================================
+
+CSV Default (recommended):
+  Uses the curated matchup CSV (992 rows, 4 colors per matchup).
+  Each matchup gets a hand-tuned palette - away accent, home
+  accent, banner color, and background.
+
+Classic Bordered:
+  The original look. Bright team primaries with auto-swap when
+  both teams have similar primaries (e.g. NYR + BUF both blue ->
+  BUF gets gold).
+
+Midnight:
+  Deep navy bg + gold accents everywhere. Award-show premium.
+
+Ice Rink:
+  Dark blue tinted bg, light blue chrome, team colors on stats.
+  Cold arctic feel.
+
+Heritage:
+  Sepia/warm vintage. Aged-paper bg, brown chrome, muted team
+  accents, cream text. Classic broadcast vibe.
+
+Neon:
+  Pure black bg with electric brights. Cyan chrome, team colors
+  at full saturation. Arcade aesthetic.
+
+Stealth:
+  Graphite gray bg, monochrome chrome, team colors only on
+  scores and stats values. Tactical/minimal.
+
+================================================================
+  HOW TO PICK A THEME
+================================================================
+
+In the app's Theme panel (left sidebar), click any of the 7
+preset cards at the top. The selection is saved to the project
+file as `color_theme`.
+
+Detail color overrides at the bottom of the panel still work
+for fine-tuning a specific element on top of any theme.
+
+================================================================
+  NEW FILES IN THIS UPDATE
+================================================================
+
+  assets/data/matchup_colors.csv               992-row 4-color matchup table
+  backend/src/nhlsb/core/matchup.py            CSV lookup module
+  backend/src/nhlsb/core/themes.py             7 theme presets
+  backend/src/nhlsb/core/renderer.py           refactored to use themes
+  backend/src/nhlsb/core/models.py             color_theme field added
+  frontend/src/components/panels/ThemePanel.tsx new theme picker UI
+  frontend/src/types/project.ts                ColorThemeName type
+
+================================================================
+  HOW TO RE-UPLOAD
+================================================================
+
+1. Unzip somewhere temporary.
+2. View -> Show -> Hidden items so .github folder is visible.
+3. Drag everything inside the unzipped folder onto your local
+   nhl-scoreboard folder. Replace all when asked.
+4. GitHub Desktop:
+     Summary: "color overhaul: 7 themes + new matchup CSV"
+     Commit + Push
+5. Wait ~10 min for the new .msi.
+
+================================================================

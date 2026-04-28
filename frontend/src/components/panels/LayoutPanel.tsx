@@ -1,15 +1,40 @@
 import { useProjectStore } from '@/store/project';
 import { Section, Field, Slider, Switch, Input, Button, Select } from '@/components/ui/primitives';
 
-const PRESETS = [
-  { name: '64×64',     w: 64,  h: 64 },
-  { name: '128×128',   w: 128, h: 128 },
-  { name: '192×192',   w: 192, h: 192 },
-  { name: '256×256',   w: 256, h: 256 },
-  { name: '320×320',   w: 320, h: 320 },
-  { name: '512×512',   w: 512, h: 512 },
-  { name: '256×128',   w: 256, h: 128 },
-  { name: '128×64',    w: 128, h: 64 },
+// Bug 7: Quick-test presets grouped by aspect ratio
+const PRESET_GROUPS: { label: string; presets: { name: string; w: number; h: number }[] }[] = [
+  { label: '4:5 (portrait, default)', presets: [
+    { name: '800×1000', w: 800, h: 1000 },
+    { name: '1080×1350', w: 1080, h: 1350 },
+    { name: '1200×1500', w: 1200, h: 1500 },
+  ]},
+  { label: '1:1 (square)', presets: [
+    { name: '32', w: 32, h: 32 },
+    { name: '64', w: 64, h: 64 },
+    { name: '128', w: 128, h: 128 },
+    { name: '256', w: 256, h: 256 },
+    { name: '320', w: 320, h: 320 },
+    { name: '512', w: 512, h: 512 },
+  ]},
+  { label: '16:9 (HD)', presets: [
+    { name: '320×180', w: 320, h: 180 },
+    { name: '640×360', w: 640, h: 360 },
+    { name: '1280×720', w: 1280, h: 720 },
+    { name: '1920×1080', w: 1920, h: 1080 },
+  ]},
+  { label: '4:3', presets: [
+    { name: '320×240', w: 320, h: 240 },
+    { name: '640×480', w: 640, h: 480 },
+  ]},
+  { label: '2:1 (LED)', presets: [
+    { name: '128×64', w: 128, h: 64 },
+    { name: '256×128', w: 256, h: 128 },
+    { name: '512×256', w: 512, h: 256 },
+  ]},
+  { label: '9:16 (tall phone)', presets: [
+    { name: '180×320', w: 180, h: 320 },
+    { name: '360×640', w: 360, h: 640 },
+  ]},
 ];
 
 export function LayoutPanel() {
@@ -23,6 +48,23 @@ export function LayoutPanel() {
 
   return (
     <div>
+      <Section title="Render style">
+        <Field label="Style">
+          <Select
+            value={(L as any).render_style ?? 'premium'}
+            onChange={(e) => update((p) => { (p.layout as any).render_style = e.target.value; })}
+          >
+            <option value="premium">Premium (broadcast / smooth)</option>
+            <option value="dot">Dot (LED / pixel art)</option>
+          </Select>
+        </Field>
+        <p className="text-[10px] text-muted">
+          Premium uses Bebas Neue, hairlines, and clean spacing — best for
+          TVs and streaming. Dot uses bitmap fonts and blocky digits — best
+          for LED panels and retro look.
+        </p>
+      </Section>
+
       <Section title="Resolution">
         <Field label="Preset">
           <Select
@@ -33,19 +75,46 @@ export function LayoutPanel() {
             }}
           >
             <option value={`${L.width}x${L.height}`}>{L.width}×{L.height} (custom)</option>
-            {PRESETS.map((p) => (
-              <option key={p.name} value={`${p.w}x${p.h}`}>{p.name}</option>
-            ))}
+            {PRESET_GROUPS.flatMap((g) =>
+              g.presets.map((p) => (
+                <option key={`${g.label}-${p.name}`} value={`${p.w}x${p.h}`}>
+                  {g.label}: {p.name}
+                </option>
+              ))
+            )}
           </Select>
         </Field>
         <Field label="Width">
-          <Input type="number" min={32} max={2048} value={L.width} className="w-20 text-right"
-            onChange={(e) => update((p) => { p.layout.width = parseInt(e.target.value) || 320; })} />
+          <Input type="number" min={32} max={4096} value={L.width} className="w-20 text-right"
+            onChange={(e) => update((p) => { p.layout.width = parseInt(e.target.value) || 1080; })} />
         </Field>
         <Field label="Height">
-          <Input type="number" min={32} max={2048} value={L.height} className="w-20 text-right"
-            onChange={(e) => update((p) => { p.layout.height = parseInt(e.target.value) || 320; })} />
+          <Input type="number" min={32} max={4096} value={L.height} className="w-20 text-right"
+            onChange={(e) => update((p) => { p.layout.height = parseInt(e.target.value) || 1350; })} />
         </Field>
+      </Section>
+
+      <Section title="Quick test (by aspect)">
+        {PRESET_GROUPS.map((g) => (
+          <div key={g.label}>
+            <div className="text-[10px] uppercase text-muted mb-1">{g.label}</div>
+            <div className="flex flex-wrap gap-1 mb-2">
+              {g.presets.map((p) => (
+                <button
+                  key={p.name}
+                  onClick={() => update((proj) => { proj.layout.width = p.w; proj.layout.height = p.h; })}
+                  className={`px-2 py-1 text-[10px] font-mono rounded border ${
+                    L.width === p.w && L.height === p.h
+                      ? 'bg-accent text-black border-accent'
+                      : 'bg-panel-2 border-border hover:bg-border'
+                  }`}
+                >
+                  {p.name}
+                </button>
+              ))}
+            </div>
+          </div>
+        ))}
       </Section>
 
       <Section title="Regions (% of height)">

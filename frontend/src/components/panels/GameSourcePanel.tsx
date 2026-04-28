@@ -40,8 +40,8 @@ export function GameSourcePanel() {
                 p.source = {
                   kind: 'mock',
                   state: {
-                    away: { abbrev: 'WSH', score: 0, shots: 15, hits: 33, blocks: 14, pim: 4, takeaways: 2, giveaways: 1, penalty_active: false },
-                    home: { abbrev: 'CAR', score: 2, shots: 25, hits: 28, blocks: 8, pim: 8, takeaways: 3, giveaways: 7, penalty_active: false },
+                    away: { abbrev: 'WSH', score: 0, shots: 15, hits: 33, blocks: 14, pim: 4, takeaways: 2, giveaways: 1, faceoff_win_pct: 52, penalty_remaining_sec: 0 },
+                    home: { abbrev: 'CAR', score: 2, shots: 25, hits: 28, blocks: 8, pim: 8, takeaways: 3, giveaways: 7, faceoff_win_pct: 48, penalty_remaining_sec: 0 },
                     period_label: 'INT.',
                     clock: '04:40',
                     intermission: true,
@@ -133,8 +133,8 @@ export function GameSourcePanel() {
                   onChange={(e) => update((p) => { if (p.source.kind === 'mock') p.source.state[side].abbrev = e.target.value.toUpperCase(); })}
                 />
               </Field>
-              {(['score', 'shots', 'hits', 'blocks', 'pim', 'takeaways', 'giveaways'] as const).map((k) => (
-                <Field key={k} label={k}>
+              {(['score', 'shots', 'hits', 'blocks', 'pim', 'takeaways', 'giveaways', 'faceoff_win_pct'] as const).map((k) => (
+                <Field key={k} label={k === 'faceoff_win_pct' ? 'fo%' : k}>
                   <Input
                     type="number" min={0}
                     className="w-16 text-right"
@@ -143,10 +143,12 @@ export function GameSourcePanel() {
                   />
                 </Field>
               ))}
-              <Field label="Penalty active">
-                <Switch
-                  checked={src.state[side].penalty_active}
-                  onChange={(b) => update((p) => { if (p.source.kind === 'mock') p.source.state[side].penalty_active = b; })}
+              <Field label="Penalty (sec)">
+                <Input
+                  type="number" min={0} max={600}
+                  className="w-16 text-right"
+                  value={src.state[side].penalty_remaining_sec}
+                  onChange={(e) => update((p) => { if (p.source.kind === 'mock') p.source.state[side].penalty_remaining_sec = parseInt(e.target.value) || 0; })}
                 />
               </Field>
             </Section>
