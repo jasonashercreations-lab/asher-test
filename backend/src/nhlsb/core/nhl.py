@@ -69,6 +69,13 @@ def fetch_game(game_id: int) -> GameState:
                 setattr(home, attr, int(entry.get("homeValue", 0)))
             except (TypeError, ValueError):
                 pass
+        # Bug 8: Face-off win percentage is a float in the API; convert to int
+        elif cat == "faceoffWinningPctg":
+            try:
+                away.faceoff_win_pct = int(round(float(entry.get("awayValue", 0)) * 100))
+                home.faceoff_win_pct = int(round(float(entry.get("homeValue", 0)) * 100))
+            except (TypeError, ValueError):
+                pass
 
     pinfo = pbp.get("periodDescriptor", {}) or {}
     period_num = pinfo.get("number", 1)
@@ -89,13 +96,58 @@ def fetch_game(game_id: int) -> GameState:
     else:
         period_label = {1: "1ST", 2: "2ND", 3: "3RD"}.get(period_num, f"{period_num}TH")
 
-    plays = pbp.get("plays", [])
-    for p in reversed(plays[-20:]):
-        if p.get("typeDescKey") == "penalty":
-            tid = p.get("details", {}).get("eventOwnerTeamId")
-            if tid == away_meta.get("id"):   away.penalty_active = True
-            elif tid == home_meta.get("id"): home.penalty_active = True
-            break
+    # Penalty detection (Bug 1: skip entirely if game is over)
+    # Bug 2: compute seconds remaining instead of just a bool
+    if gs not in ("FINAL", "OFF") and not in_int:
+        plays = pbp.get("plays", [])
+        # Convert "M:SS" period clock to seconds remaining IN PERIOD
+        def _clock_to_sec(s):
+            try:
+                m, ss = s.split(":")
+                return int(m) * 60 + int(ss)
+            except Exception:
+                return 0
+        clock_sec = _clock_to_sec(clock_str)
+
+        # Walk recent penalties; for each, compute when it would expire and
+        # whether it's still active vs the current clock.
+        # NHL feed gives penalty duration in minutes ("duration": 2/4/5).
+        for p in reversed(plays[-50:]):
+            if p.get("typeDescKey") != "penalty":
+                continue
+            details = p.get("details", {}) or {}
+            duration_min = details.get("duration", 2)
+            try:
+                duration_sec = int(duration_min) * 60
+            except (TypeError, ValueError):
+                duration_sec = 120
+
+            # Period of the penalty event vs current period
+            pen_period = (p.get("periodDescriptor", {}) or {}).get("number", period_num)
+            pen_clock = p.get("timeInPeriod", "0:00")
+            # timeInPeriod is the clock when penalty was assessed (counting up
+            # in some feeds, down in others). NHL Web API uses MM:SS elapsed.
+            try:
+                m, ss = pen_clock.split(":")
+                elapsed_at_pen = int(m) * 60 + int(ss)
+            except Exception:
+                elapsed_at_pen = 0
+
+            # Game elapsed seconds from start of game
+            period_len = 20 * 60
+            pen_total_elapsed = (pen_period - 1) * period_len + elapsed_at_pen
+            cur_total_elapsed = (period_num - 1) * period_len + (period_len - clock_sec)
+            remaining = (pen_total_elapsed + duration_sec) - cur_total_elapsed
+            if remaining <= 0:
+                continue   # already expired
+
+            tid = details.get("eventOwnerTeamId")
+            if tid == away_meta.get("id") and away.penalty_remaining_sec == 0:
+                away.penalty_remaining_sec = int(remaining)
+            elif tid == home_meta.get("id") and home.penalty_remaining_sec == 0:
+                home.penalty_remaining_sec = int(remaining)
+            if away.penalty_remaining_sec and home.penalty_remaining_sec:
+                break
 
     return GameState(
         away=away, home=home,

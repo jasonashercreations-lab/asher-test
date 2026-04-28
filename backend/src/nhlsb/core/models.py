@@ -33,7 +33,11 @@ class TeamState(BaseModel):
     pim: int = 0
     takeaways: int = 0
     giveaways: int = 0
-    penalty_active: bool = False
+    # Face-off win percentage (0-100, integer for clean display)
+    faceoff_win_pct: int = 0
+    # Penalty time remaining for this team's active power-play OPPONENT.
+    # 0 = no active penalty. Seconds remaining for the renderer to format M:SS.
+    penalty_remaining_sec: int = 0
 
 
 class GameState(BaseModel):
@@ -53,19 +57,19 @@ class FontSpec(BaseModel):
 
 
 class Theme(BaseModel):
-    bg: RGB = RGB(r=0, g=0, b=0)
-    grid: RGB = RGB(r=255, g=255, b=255)
-    grid_score: RGB = RGB(r=255, g=200, b=0)
-    score_color: RGB = RGB(r=255, g=200, b=0)
+    bg: RGB = RGB(r=8, g=8, b=10)
+    grid: RGB = RGB(r=140, g=142, b=148)
+    grid_score: RGB = RGB(r=255, g=255, b=255)
+    score_color: RGB = RGB(r=255, g=255, b=255)
     team_color: RGB = RGB(r=255, g=255, b=255)
     period_color: RGB = RGB(r=255, g=255, b=255)
-    clock_color: RGB = RGB(r=255, g=200, b=0)
-    stat_value_color: RGB = RGB(r=255, g=200, b=0)
+    clock_color: RGB = RGB(r=220, g=40, b=40)        # red broadcast clock
+    stat_value_color: RGB = RGB(r=255, g=255, b=255)
     stat_label_color: RGB = RGB(r=255, g=255, b=255)
-    penalty_active_color: RGB = RGB(r=255, g=90, b=0)
+    penalty_active_color: RGB = RGB(r=220, g=40, b=40)
 
-    label_font: FontSpec = FontSpec()
-    team_font: FontSpec = FontSpec()
+    label_font: FontSpec = FontSpec(kind="ttf", name="BebasNeue-Regular.ttf", size=14)
+    team_font: FontSpec = FontSpec(kind="ttf", name="BebasNeue-Regular.ttf", size=18)
 
 
 # -------- Layout --------
@@ -77,19 +81,27 @@ class StatRow(BaseModel):
 
 class Layout(BaseModel):
     """Resolution-agnostic. All region heights are fractions of total height."""
-    width: int = 320
-    height: int = 320
+    # Default is 4:5 portrait (1080x1350) - Instagram portrait, looks great on
+    # most modern displays whether mounted vertically or shown in a portrait widget.
+    width: int = 1080
+    height: int = 1350
+
+    # Render style: "premium" (smooth Bebas Neue + hairlines, broadcast look)
+    # or "dot" (pixel-art LED panel look with bitmap fonts and blocky digits).
+    render_style: Literal["premium", "dot"] = "premium"
 
     # Vertical region split (must sum <=1.0). Anything left over is bottom stats.
-    score_h: float = 0.24
-    team_h: float = 0.16
+    score_h: float = 0.22
+    team_h: float = 0.14
+    # Thin row holding "PEN. | period | PEN." labels
     pen_label_h: float = 0.07
-    pen_box_h: float = 0.07
-    clock_h: float = 0.13
+    # Taller row holding the clock + penalty time countdowns
+    pen_box_h: float = 0.18
+    clock_h: float = 0.0         # deprecated - kept for backward compatibility
     # remainder -> stats area
 
     # Horizontal: width fraction reserved for sprites on each side
-    sprite_w: float = 0.18
+    sprite_w: float = 0.20
 
     # Show/hide regions
     show_sprites: bool = True
@@ -97,12 +109,13 @@ class Layout(BaseModel):
 
     # Stats rows (order is render order)
     stats: list[StatRow] = Field(default_factory=lambda: [
-        StatRow(field="shots",     label="SHOTS"),
-        StatRow(field="hits",      label="HITS"),
-        StatRow(field="blocks",    label="BLOCKS"),
-        StatRow(field="pim",       label="PIM"),
-        StatRow(field="takeaways", label="T.AWAYS"),
-        StatRow(field="giveaways", label="G.AWAYS"),
+        StatRow(field="shots",            label="SHOTS"),
+        StatRow(field="hits",             label="HITS"),
+        StatRow(field="blocks",           label="BLOCKS"),
+        StatRow(field="pim",              label="PIM"),
+        StatRow(field="takeaways",        label="T.AWAYS"),
+        StatRow(field="giveaways",        label="G.AWAYS"),
+        StatRow(field="faceoff_win_pct",  label="FO%",      enabled=False),
     ])
 
 
@@ -179,6 +192,18 @@ class Project(BaseModel):
     name: str = "Untitled Scoreboard"
     theme: Theme = Field(default_factory=Theme)
     layout: Layout = Field(default_factory=Layout)
+    # Color preset name. One of:
+    #   csv_default      - matchup CSV-driven colors (recommended)
+    #   classic_bordered - bright team primaries with auto-swap
+    #   midnight         - deep navy + gold premium look
+    #   ice_rink         - light arctic palette
+    #   heritage         - sepia/warm vintage
+    #   neon             - electric arcade brights
+    #   stealth          - graphite monochrome with team color accents
+    color_theme: Literal[
+        "csv_default", "classic_bordered", "midnight", "ice_rink",
+        "heritage", "neon", "stealth"
+    ] = "csv_default"
     team_overrides: dict[str, TeamOverride] = Field(default_factory=dict)
     sprite: SpriteSpec = Field(default_factory=SpriteSpec)
     source: GameSource = Field(default_factory=NHLSource)

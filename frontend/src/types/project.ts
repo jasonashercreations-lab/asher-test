@@ -11,7 +11,8 @@ export interface TeamState {
   pim: number;
   takeaways: number;
   giveaways: number;
-  penalty_active: boolean;
+  faceoff_win_pct: number;
+  penalty_remaining_sec: number;
 }
 
 export interface GameState {
@@ -52,6 +53,7 @@ export interface StatRow {
 export interface Layout {
   width: number;
   height: number;
+  render_style: 'premium' | 'dot';
   score_h: number;
   team_h: number;
   pen_label_h: number;
@@ -84,11 +86,21 @@ export type OutputDevice =
   | { kind: 'matrix'; rows: number; cols: number; chain_length: number; parallel: number; hardware_mapping: string; brightness: number }
   | { kind: 'stream'; enabled: boolean };
 
+export type ColorThemeName =
+  | 'csv_default'
+  | 'classic_bordered'
+  | 'midnight'
+  | 'ice_rink'
+  | 'heritage'
+  | 'neon'
+  | 'stealth';
+
 export interface Project {
   schema_version: number;
   name: string;
   theme: Theme;
   layout: Layout;
+  color_theme?: ColorThemeName;
   team_overrides: Record<string, TeamOverride>;
   sprite: SpriteSpec;
   source: GameSource;
