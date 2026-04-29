@@ -139,9 +139,10 @@ class NHLSource(BaseModel):
     kind: Literal["nhl"] = "nhl"
     team_filter: Optional[str] = None
     game_id: Optional[int] = None
-    # Poll the NHL API every second for live tick-by-tick clock updates.
-    # Tradeoff: ~3,600 requests/hour against api-web.nhle.com per running client.
-    poll_interval_sec: float = 1.0
+    # Poll the NHL API for ground truth. The local engine ticks the clock
+    # down at 1Hz between polls, so this can be much slower than 1s without
+    # affecting clock smoothness. Default 5s = ~720 req/hour.
+    poll_interval_sec: float = 5.0
 
 
 class MockSource(BaseModel):
