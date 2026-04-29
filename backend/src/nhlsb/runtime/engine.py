@@ -95,24 +95,99 @@ class Engine:
         return None
 
     async def run(self):
+        """Main loop with two independent cadences:
+
+          - Every 1.0s: render + broadcast a frame, AND tick the local clock
+            down by 1 second when the game is in active play. The local tick
+            is what makes the displayed clock move smoothly between API polls.
+
+          - Every poll_interval_sec (default 1.0s): hit the NHL API for ground
+            truth. When the API value lands, snap the state's clock to it.
+
+          - Stoppage detection: track the last 3 distinct API clock values.
+            If the same value comes back 3 polls in a row AND the local tick
+            has already moved past it, the play is stopped (whistle, TV
+            timeout, etc.) - freeze the local tick until the API moves again.
+        """
         self._running = True
         last_state_fetch = 0.0
-        last_render = 0.0
+        last_local_tick = time.time()
+        # Recent API clock observations for stoppage detection
+        recent_api_clocks: list[str] = []
+        # Whether the local tick is currently frozen (stoppage detected)
+        clock_frozen = False
+
         # Render initial frame immediately
         await self.broadcast_frame()
+
         while self._running:
             now = time.time()
             interval = (self.project.source.poll_interval_sec
                         if isinstance(self.project.source, NHLSource) else 0.5)
+
+            # ---- API poll for ground truth ----
             if now - last_state_fetch >= interval:
                 fetched = await self._fetch_state()
-                if fetched is not None:
-                    self.state = fetched
                 last_state_fetch = now
                 self.last_fetch_at = now
-                await self.broadcast_frame()
-                last_render = now
+                if fetched is not None:
+                    new_clock = fetched.clock or ""
+                    # Track recent API clock observations
+                    recent_api_clocks.append(new_clock)
+                    if len(recent_api_clocks) > 3:
+                        recent_api_clocks.pop(0)
+                    # Stoppage = same value 3 times in a row
+                    clock_frozen = (
+                        len(recent_api_clocks) >= 3
+                        and len(set(recent_api_clocks)) == 1
+                    )
+                    # Snap state to the API value
+                    self.state = fetched
+                    last_local_tick = now
+                    await self.broadcast_frame()
+                    continue
+
+            # ---- Local 1Hz tick between API polls ----
+            if now - last_local_tick >= 1.0:
+                if self._tick_local_clock(frozen=clock_frozen):
+                    await self.broadcast_frame()
+                last_local_tick = now
+
             await asyncio.sleep(0.1)
+
+    def _tick_local_clock(self, frozen: bool) -> bool:
+        """Decrement the displayed clock by 1 second if appropriate.
+        Returns True if state changed (caller should re-broadcast)."""
+        if frozen:
+            return False
+        if not isinstance(self.project.source, NHLSource):
+            return False
+        # Don't tick if game is over, in intermission, or in unknown state
+        period = (self.state.period_label or "").upper()
+        if period in ("FINAL", "INT.", ""):
+            return False
+        # Parse "MM:SS" - decrement by 1 second
+        clock_str = self.state.clock or ""
+        try:
+            m, s = clock_str.split(":")
+            total = int(m) * 60 + int(s)
+        except (ValueError, AttributeError):
+            return False
+        if total <= 0:
+            return False
+        total -= 1
+        new_clock = f"{total // 60:02d}:{total % 60:02d}"
+        if new_clock == clock_str:
+            return False
+        # Also tick down active penalty timers
+        if self.state.away.penalty_remaining_sec > 0:
+            self.state.away.penalty_remaining_sec = max(
+                0, self.state.away.penalty_remaining_sec - 1)
+        if self.state.home.penalty_remaining_sec > 0:
+            self.state.home.penalty_remaining_sec = max(
+                0, self.state.home.penalty_remaining_sec - 1)
+        self.state.clock = new_clock
+        return True
 
     def stop(self):
         self._running = False
