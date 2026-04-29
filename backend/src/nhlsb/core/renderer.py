@@ -212,7 +212,8 @@ def _paste_banner_fill(img, banner, x0, y0, x1, y1):
 # ---------- Main renderer ----------
 
 def render(project: Project, state: GameState,
-           assets_root: Path | None = None) -> Image.Image:
+           assets_root: Path | None = None,
+           show_period_splash: bool = False) -> Image.Image:
     L: Layout = project.layout
     T: Theme = project.theme
     W, H = L.width, L.height
@@ -220,6 +221,11 @@ def render(project: Project, state: GameState,
     # ===== Game state (needed early for theme) =====
     away_t = state.away
     home_t = state.home
+    # Allow callers to pass the splash flag either via kwarg or via a
+    # transient attribute on `state` (engine.py uses the latter for backward
+    # compatibility with code that doesn't know about the kwarg).
+    if not show_period_splash:
+        show_period_splash = bool(getattr(state, "show_period_splash", False))
     away_colors = teams.colors_for(away_t.abbrev,
                                    project.team_overrides.get(away_t.abbrev))
     home_colors = teams.colors_for(home_t.abbrev,
@@ -586,5 +592,61 @@ def render(project: Project, state: GameState,
                       x_lbl + (label_col_w - tw) // 2,
                       ry0 + (row_h - th) // 2,
                       row.label, NEUTRAL_WHITE, scale=fs)
+
+    # ===== Period-transition splash overlay =====
+    # Drawn last so it sits on top of everything. Fired by the engine for a
+    # short window after a period ends and the game enters intermission.
+    if show_period_splash and state.intermission:
+        # Map period_label to a friendly "END OF Nth" message. The period
+        # label has already advanced to "INT." by the time we render, so we
+        # have to reconstruct what just ended from the period number context.
+        # Simplest reliable approach: show "INTERMISSION" + the next period.
+        # If we can guess from period_label != "INT.", use it directly.
+        msg_main = "END OF PERIOD"
+        # Heuristic: if period_label is a numeric "1ST"/"2ND"/"3RD", use it.
+        plabel = (state.period_label or "").upper()
+        if plabel in ("1ST", "2ND", "3RD"):
+            msg_main = f"END OF {plabel}"
+        elif plabel == "OT":
+            msg_main = "END OF OT"
+        elif plabel == "INT.":
+            # We're in intermission - the period that just ended is one back.
+            # Without explicit info we use a generic "END OF PERIOD".
+            msg_main = "INTERMISSION"
+
+        # Translucent dark backdrop (composite via alpha-blend)
+        backdrop = Image.new("RGBA", (W, H), (0, 0, 0, 200))
+        img_rgba = img.convert("RGBA")
+        img_rgba.alpha_composite(backdrop)
+
+        # Big main text - find scale that fits the width
+        max_text_w = int(W * 0.85)
+        max_text_h = int(H * 0.18)
+        scale = _auto_fit_scale(font, msg_main, max_text_w, max_text_h)
+        tw, th = font.measure(msg_main, scale=scale)
+        # Draw onto the rgba buffer via a temporary RGB image
+        overlay = Image.new("RGB", (W, H), (0, 0, 0))
+        font.draw(overlay,
+                  (W - tw) // 2, (H - th) // 2 - int(H * 0.04),
+                  msg_main, NEUTRAL_WHITE, scale=scale)
+        # Subtitle - intermission countdown
+        sub = state.clock or ""
+        if sub:
+            sscale = _auto_fit_scale(font, sub, max_text_w, int(max_text_h * 0.55))
+            sw, sh = font.measure(sub, scale=sscale)
+            font.draw(overlay,
+                      (W - sw) // 2, (H + th) // 2 - int(H * 0.02),
+                      sub, CLOCK_RED, scale=sscale)
+
+        # Composite the white-on-black overlay text onto the dimmed background.
+        # Build alpha mask vectorized: take the max of R/G/B, threshold via point().
+        overlay_rgba = overlay.convert("RGBA")
+        from PIL import ImageChops
+        r, g, b = overlay.split()
+        max_rg = ImageChops.lighter(r, g)
+        max_rgb = ImageChops.lighter(max_rg, b)
+        mask = max_rgb.point(lambda v: 255 if v > 8 else 0).convert("L")
+        img_rgba.paste(overlay_rgba, (0, 0), mask)
+        img = img_rgba.convert("RGB")
 
     return img

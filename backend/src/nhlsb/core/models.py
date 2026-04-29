@@ -46,6 +46,8 @@ class TeamState(BaseModel):
 
 
 class GameState(BaseModel):
+    model_config = ConfigDict(extra="allow")  # allow runtime-only flags
+
     away: TeamState = Field(default_factory=lambda: TeamState(abbrev="---"))
     home: TeamState = Field(default_factory=lambda: TeamState(abbrev="---"))
     period_label: str = "1ST"
@@ -112,6 +114,12 @@ class Layout(BaseModel):
     show_sprites: bool = True
     show_pen_indicators: bool = True
 
+    # Period transition splash: when a period ends and the game enters
+    # intermission, display "END OF 1ST" / "END OF 2ND" full-bleed for a few
+    # seconds before transitioning to the regular intermission view.
+    show_period_transition_splash: bool = True
+    period_splash_duration_sec: int = 6
+
     # Stats rows (order is render order)
     stats: list[StatRow] = Field(default_factory=lambda: [
         StatRow(field="shots",            label="SHOTS"),
@@ -148,6 +156,13 @@ class NHLSource(BaseModel):
     # down at 1Hz between polls, so this can be much slower than 1s without
     # affecting clock smoothness. Default 5s = ~720 req/hour.
     poll_interval_sec: float = 5.0
+    # When the currently-displayed game enters FINAL state, automatically
+    # advance to the next live game in today's schedule. If no live games
+    # remain, hold on FINAL until tomorrow's schedule comes in.
+    auto_rotate: bool = False
+    # When auto-rotate is on AND there are multiple live games, cycle through
+    # them every N seconds even if none have ended. 0 = disabled.
+    rotate_interval_sec: int = 0
 
 
 class MockSource(BaseModel):

@@ -77,6 +77,15 @@ export function TeamsPanel() {
             </div>
           </Field>
         ))}
+        {ovr && (ovr.primary || ovr.secondary || ovr.emblem || ovr.sprite_asset) && (
+          <Button
+            className="w-full mt-1"
+            variant="default"
+            onClick={() => update((p) => { delete p.team_overrides[picked]; })}
+          >
+            <X className="w-3 h-3" /> Reset {picked} to NHL official
+          </Button>
+        )}
       </Section>
 
       <Section title="Sprite asset">

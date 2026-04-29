@@ -148,6 +148,7 @@ def fetch_game(game_id: int) -> GameState:
 
             # Period of the penalty event vs current period
             pen_period = (p.get("periodDescriptor", {}) or {}).get("number", period_num)
+            pen_period_type = (p.get("periodDescriptor", {}) or {}).get("periodType", "REG")
             pen_clock = p.get("timeInPeriod", "0:00")
             # timeInPeriod is the clock when penalty was assessed (counting up
             # in some feeds, down in others). NHL Web API uses MM:SS elapsed.
@@ -157,10 +158,35 @@ def fetch_game(game_id: int) -> GameState:
             except Exception:
                 elapsed_at_pen = 0
 
-            # Game elapsed seconds from start of game
-            period_len = 20 * 60
-            pen_total_elapsed = (pen_period - 1) * period_len + elapsed_at_pen
-            cur_total_elapsed = (period_num - 1) * period_len + (period_len - clock_sec)
+            # Period length depends on whether we're in regulation or OT, and
+            # in regular season vs playoffs. Detect playoffs by gameType from
+            # the parent payload (3 = playoffs, 2 = regular).
+            game_type = pbp.get("gameType", 2)
+            def _period_len(pn: int, ptype: str) -> int:
+                if pn <= 3 or ptype == "REG":
+                    return 20 * 60
+                # OT - playoffs are continuous 20-min OT periods, regular
+                # season is a single 5-min OT.
+                if game_type == 3:
+                    return 20 * 60
+                return 5 * 60
+
+            cur_period_len = _period_len(period_num, period_type)
+            # Sum elapsed time across all completed periods up to (but not
+            # including) the current period - each may have its own length.
+            def _elapsed_through(p_no: int, ptype: str, in_period_elapsed: int) -> int:
+                total = 0
+                for k in range(1, p_no):
+                    # Approximation: assume periods 1-3 are 20-min regulation;
+                    # period >= 4 uses ptype-based length. Good enough for the
+                    # penalty arithmetic since penalties don't carry across many
+                    # OTs in practice.
+                    total += _period_len(k, "REG" if k <= 3 else ptype)
+                return total + in_period_elapsed
+
+            pen_total_elapsed = _elapsed_through(pen_period, pen_period_type, elapsed_at_pen)
+            cur_total_elapsed = _elapsed_through(period_num, period_type,
+                                                 cur_period_len - clock_sec)
             remaining = (pen_total_elapsed + duration_sec) - cur_total_elapsed
             if remaining <= 0:
                 continue   # already expired

@@ -1,0 +1,113 @@
+{
+  "schema_version": 1,
+  "name": "Minimalist",
+  "theme": {
+    "bg": {
+      "r": 18,
+      "g": 18,
+      "b": 22
+    },
+    "grid": {
+      "r": 80,
+      "g": 80,
+      "b": 86
+    },
+    "grid_score": {
+      "r": 255,
+      "g": 255,
+      "b": 255
+    },
+    "score_color": {
+      "r": 255,
+      "g": 255,
+      "b": 255
+    },
+    "team_color": {
+      "r": 255,
+      "g": 255,
+      "b": 255
+    },
+    "period_color": {
+      "r": 255,
+      "g": 255,
+      "b": 255
+    },
+    "clock_color": {
+      "r": 255,
+      "g": 255,
+      "b": 255
+    },
+    "stat_value_color": {
+      "r": 255,
+      "g": 255,
+      "b": 255
+    },
+    "stat_label_color": {
+      "r": 255,
+      "g": 255,
+      "b": 255
+    },
+    "penalty_active_color": {
+      "r": 220,
+      "g": 40,
+      "b": 40
+    },
+    "label_font": {
+      "kind": "ttf",
+      "name": "BebasNeue-Regular.ttf",
+      "size": 14
+    },
+    "team_font": {
+      "kind": "ttf",
+      "name": "BebasNeue-Regular.ttf",
+      "size": 18
+    }
+  },
+  "layout": {
+    "width": 1080,
+    "height": 600,
+    "render_style": "premium",
+    "score_h": 0.32,
+    "team_h": 0.18,
+    "pen_label_h": 0.08,
+    "pen_box_h": 0.22,
+    "clock_h": 0.0,
+    "sprite_w": 0.0,
+    "show_sprites": false,
+    "show_pen_indicators": true,
+    "show_period_transition_splash": false,
+    "period_splash_duration_sec": 6,
+    "stats": [
+      {
+        "field": "shots",
+        "label": "SHOTS",
+        "enabled": true
+      },
+      {
+        "field": "hits",
+        "label": "HITS",
+        "enabled": true
+      }
+    ]
+  },
+  "color_theme": "stealth",
+  "team_overrides": {},
+  "sprite": {
+    "pixels": [],
+    "palette": {}
+  },
+  "source": {
+    "kind": "nhl",
+    "team_filter": null,
+    "game_id": null,
+    "poll_interval_sec": 5.0,
+    "auto_rotate": true,
+    "rotate_interval_sec": 30
+  },
+  "outputs": [
+    {
+      "kind": "stream",
+      "enabled": true
+    }
+  ]
+}

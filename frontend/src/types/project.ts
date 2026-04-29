@@ -13,6 +13,7 @@ export interface TeamState {
   giveaways: number;
   faceoff_win_pct: number;
   penalty_remaining_sec: number;
+  active_penalty_count: number;
 }
 
 export interface GameState {
@@ -62,6 +63,8 @@ export interface Layout {
   sprite_w: number;
   show_sprites: boolean;
   show_pen_indicators: boolean;
+  show_period_transition_splash: boolean;
+  period_splash_duration_sec: number;
   stats: StatRow[];
 }
 
@@ -78,7 +81,14 @@ export interface SpriteSpec {
 }
 
 export type GameSource =
-  | { kind: 'nhl'; team_filter?: string | null; game_id?: number | null; poll_interval_sec: number }
+  | {
+      kind: 'nhl';
+      team_filter?: string | null;
+      game_id?: number | null;
+      poll_interval_sec: number;
+      auto_rotate: boolean;
+      rotate_interval_sec: number;
+    }
   | { kind: 'mock'; state: GameState };
 
 export type OutputDevice =
@@ -119,4 +129,19 @@ export interface BackendStatus {
   last_fetch_at: number;
   last_error: string;
   current_state: GameState;
+  source_kind: string;
+  source_meta: {
+    team_filter?: string | null;
+    game_id?: number | null;
+    poll_interval_sec?: number;
+    active_game_id?: number | null;
+  };
+  subscriber_count: number;
+}
+
+export interface AssetList {
+  sprites: string[];
+  fonts: string[];
+  logos: string[];
+  banners: string[];
 }

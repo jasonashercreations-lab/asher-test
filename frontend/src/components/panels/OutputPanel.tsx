@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useProjectStore } from '@/store/project';
+import { api } from '@/api/client';
 import { Section, Field, Switch, Input, Slider, Button, Select } from '@/components/ui/primitives';
 import type { OutputDevice } from '@/types/project';
 import { Trash2, Monitor, Cpu, Globe, Maximize2, Power } from 'lucide-react';
@@ -71,6 +72,7 @@ export function OutputPanel() {
             </button>
           }
         >
+          <OutputThumbnail index={i} />
           <OutputEditor
             output={out}
             onChange={(next) => update((p) => { p.outputs[i] = next; })}
@@ -235,5 +237,26 @@ function WindowOutputEditor({
         </p>
       )}
     </>
+  );
+}
+
+/** Live thumbnail for an output card. Polls the per-output preview PNG every
+ *  2s. Shows "—" when the engine hasn't produced a frame yet. */
+function OutputThumbnail({ index }: { index: number }) {
+  const [src, setSrc] = useState<string>(api.outputPreviewUrl(index));
+  useEffect(() => {
+    const tick = () => setSrc(api.outputPreviewUrl(index));
+    const t = setInterval(tick, 2000);
+    return () => clearInterval(t);
+  }, [index]);
+  return (
+    <div className="bg-bg border border-border rounded mb-2 overflow-hidden">
+      <img
+        src={src}
+        alt={`output ${index}`}
+        className="w-full h-24 object-contain"
+        onError={(e) => { (e.target as HTMLImageElement).style.opacity = '0.2'; }}
+      />
+    </div>
   );
 }

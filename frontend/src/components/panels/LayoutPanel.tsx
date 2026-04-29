@@ -141,6 +141,28 @@ export function LayoutPanel() {
         </Field>
       </Section>
 
+      <Section title="Period transition splash">
+        <Field label="Show splash">
+          <Switch
+            checked={L.show_period_transition_splash ?? true}
+            onChange={(b) => update((p) => { p.layout.show_period_transition_splash = b; })}
+          />
+        </Field>
+        <Field label="Duration">
+          <div className="flex items-center gap-1">
+            <div className="w-24"><Slider
+              value={L.period_splash_duration_sec ?? 6}
+              min={2} max={15} step={1}
+              onChange={(v) => update((p) => { p.layout.period_splash_duration_sec = Math.round(v); })}
+            /></div>
+            <span className="text-[10px] text-muted w-10 text-right">{L.period_splash_duration_sec ?? 6}s</span>
+          </div>
+        </Field>
+        <p className="text-[10px] text-muted">
+          When a period ends, briefly overlays "END OF 1ST" before the regular intermission view.
+        </p>
+      </Section>
+
       <Section title="Stat rows">
         <div className="text-[10px] text-muted mb-2">
           Use ▲▼ to reorder. The order here is the top-to-bottom order in the

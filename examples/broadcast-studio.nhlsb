@@ -1,0 +1,144 @@
+{
+  "schema_version": 1,
+  "name": "Broadcast Studio",
+  "theme": {
+    "bg": {
+      "r": 8,
+      "g": 8,
+      "b": 10
+    },
+    "grid": {
+      "r": 140,
+      "g": 142,
+      "b": 148
+    },
+    "grid_score": {
+      "r": 255,
+      "g": 255,
+      "b": 255
+    },
+    "score_color": {
+      "r": 255,
+      "g": 255,
+      "b": 255
+    },
+    "team_color": {
+      "r": 255,
+      "g": 255,
+      "b": 255
+    },
+    "period_color": {
+      "r": 255,
+      "g": 255,
+      "b": 255
+    },
+    "clock_color": {
+      "r": 220,
+      "g": 40,
+      "b": 40
+    },
+    "stat_value_color": {
+      "r": 255,
+      "g": 255,
+      "b": 255
+    },
+    "stat_label_color": {
+      "r": 255,
+      "g": 255,
+      "b": 255
+    },
+    "penalty_active_color": {
+      "r": 220,
+      "g": 40,
+      "b": 40
+    },
+    "label_font": {
+      "kind": "ttf",
+      "name": "BebasNeue-Regular.ttf",
+      "size": 14
+    },
+    "team_font": {
+      "kind": "ttf",
+      "name": "BebasNeue-Regular.ttf",
+      "size": 18
+    }
+  },
+  "layout": {
+    "width": 1080,
+    "height": 1350,
+    "render_style": "premium",
+    "score_h": 0.22,
+    "team_h": 0.14,
+    "pen_label_h": 0.07,
+    "pen_box_h": 0.18,
+    "clock_h": 0.0,
+    "sprite_w": 0.2,
+    "show_sprites": true,
+    "show_pen_indicators": true,
+    "show_period_transition_splash": true,
+    "period_splash_duration_sec": 6,
+    "stats": [
+      {
+        "field": "shots",
+        "label": "SHOTS",
+        "enabled": true
+      },
+      {
+        "field": "hits",
+        "label": "HITS",
+        "enabled": true
+      },
+      {
+        "field": "blocks",
+        "label": "BLOCKS",
+        "enabled": true
+      },
+      {
+        "field": "pim",
+        "label": "PIM",
+        "enabled": true
+      },
+      {
+        "field": "takeaways",
+        "label": "T.AWAYS",
+        "enabled": true
+      },
+      {
+        "field": "giveaways",
+        "label": "G.AWAYS",
+        "enabled": true
+      },
+      {
+        "field": "faceoff_win_pct",
+        "label": "FACEOFF",
+        "enabled": false
+      }
+    ]
+  },
+  "color_theme": "csv_default",
+  "team_overrides": {},
+  "sprite": {
+    "pixels": [],
+    "palette": {}
+  },
+  "source": {
+    "kind": "nhl",
+    "team_filter": null,
+    "game_id": null,
+    "poll_interval_sec": 5.0,
+    "auto_rotate": true,
+    "rotate_interval_sec": 0
+  },
+  "outputs": [
+    {
+      "kind": "stream",
+      "enabled": true
+    },
+    {
+      "kind": "window",
+      "monitor": 0,
+      "fullscreen": true,
+      "upscale": 2
+    }
+  ]
+}
