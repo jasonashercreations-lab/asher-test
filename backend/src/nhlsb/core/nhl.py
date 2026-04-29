@@ -81,7 +81,19 @@ def fetch_game(game_id: int) -> GameState:
     period_num = pinfo.get("number", 1)
     period_type = pinfo.get("periodType", "REG")
     clock = pbp.get("clock", {}) or {}
-    clock_str = clock.get("timeRemaining") or _format_clock(clock.get("secondsRemaining"))
+    # Always render clock as zero-padded MM:SS so its width never changes
+    # mid-period (the API returns "9:59" then "10:00" otherwise, which makes
+    # the renderer re-fit and visibly resize text).
+    raw_secs = clock.get("secondsRemaining")
+    if raw_secs is None:
+        # Fall back to parsing timeRemaining if secondsRemaining is missing
+        tr = clock.get("timeRemaining") or "0:00"
+        try:
+            m, ss = tr.split(":")
+            raw_secs = int(m) * 60 + int(ss)
+        except Exception:
+            raw_secs = 0
+    clock_str = _format_clock(raw_secs)
     in_int = bool(clock.get("inIntermission"))
 
     gs = pbp.get("gameState", "")
@@ -109,13 +121,25 @@ def fetch_game(game_id: int) -> GameState:
                 return 0
         clock_sec = _clock_to_sec(clock_str)
 
-        # Walk recent penalties; for each, compute when it would expire and
-        # whether it's still active vs the current clock.
+        away_id = away_meta.get("id")
+        home_id = home_meta.get("id")
+        # Collect remaining-seconds for every active skater-affecting penalty.
+        away_actives: list[int] = []
+        home_actives: list[int] = []
+
         # NHL feed gives penalty duration in minutes ("duration": 2/4/5).
-        for p in reversed(plays[-50:]):
+        # Misconducts (10 min) and game misconducts don't reduce skater count;
+        # filter them out by typeCode/descKey when present.
+        for p in plays:
             if p.get("typeDescKey") != "penalty":
                 continue
             details = p.get("details", {}) or {}
+
+            type_code = (details.get("typeCode") or "").upper()
+            desc_key = (details.get("descKey") or "").lower()
+            if type_code in ("MIS", "GAM") or "misconduct" in desc_key:
+                continue
+
             duration_min = details.get("duration", 2)
             try:
                 duration_sec = int(duration_min) * 60
@@ -142,12 +166,18 @@ def fetch_game(game_id: int) -> GameState:
                 continue   # already expired
 
             tid = details.get("eventOwnerTeamId")
-            if tid == away_meta.get("id") and away.penalty_remaining_sec == 0:
-                away.penalty_remaining_sec = int(remaining)
-            elif tid == home_meta.get("id") and home.penalty_remaining_sec == 0:
-                home.penalty_remaining_sec = int(remaining)
-            if away.penalty_remaining_sec and home.penalty_remaining_sec:
-                break
+            if tid == away_id:
+                away_actives.append(int(remaining))
+            elif tid == home_id:
+                home_actives.append(int(remaining))
+
+        # Displayed timer = soonest-expiring; count = how many are stacked.
+        if away_actives:
+            away.penalty_remaining_sec = min(away_actives)
+            away.active_penalty_count = len(away_actives)
+        if home_actives:
+            home.penalty_remaining_sec = min(home_actives)
+            home.active_penalty_count = len(home_actives)
 
     return GameState(
         away=away, home=home,

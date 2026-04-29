@@ -403,43 +403,76 @@ def render(project: Project, state: GameState,
         cells.append((cur_x, cur_x + cell_w))
         cur_x += cell_w + gap
 
-    away_pen = (f"{away_t.penalty_remaining_sec // 60:02d}:{away_t.penalty_remaining_sec % 60:02d}"
-                if away_t.penalty_remaining_sec > 0 and not is_final else "")
-    home_pen = (f"{home_t.penalty_remaining_sec // 60:02d}:{home_t.penalty_remaining_sec % 60:02d}"
-                if home_t.penalty_remaining_sec > 0 and not is_final else "")
+    # Active-penalty count per team. Falls back to a single penalty when only
+    # the legacy `penalty_remaining_sec` is populated (older saved states).
+    away_pens = away_t.active_penalty_count or (1 if away_t.penalty_remaining_sec > 0 else 0)
+    home_pens = home_t.active_penalty_count or (1 if home_t.penalty_remaining_sec > 0 else 0)
+    if is_final:
+        away_pens = home_pens = 0
+
+    # Penalty-timer strings (only used for the PK side)
+    away_timer = (f"{away_t.penalty_remaining_sec // 60:02d}:{away_t.penalty_remaining_sec % 60:02d}"
+                  if away_t.penalty_remaining_sec > 0 and not is_final else "")
+    home_timer = (f"{home_t.penalty_remaining_sec // 60:02d}:{home_t.penalty_remaining_sec % 60:02d}"
+                  if home_t.penalty_remaining_sec > 0 and not is_final else "")
+
+    # Strength string (e.g. "5-ON-4"): each side has 5 - active_penalties
+    # skaters on the ice, floored at 3 (NHL minimum).
+    def _strength(mine: int, theirs: int) -> str:
+        return f"{max(3, 5 - mine)}-ON-{max(3, 5 - theirs)}"
+
+    # Per-cell label + value:
+    #   imbalanced  -> PK side: label + timer,  PP side: label + strength
+    #   coincidental (>0 each, equal counts) -> both: EVEN STRENGTH + strength
+    #   no penalties -> both: PENALTY (no value)
+    if away_pens > home_pens:
+        away_pen_label, away_pen = "PENALTY KILL",  away_timer
+        home_pen_label, home_pen = "POWER PLAY",    _strength(home_pens, away_pens)
+    elif home_pens > away_pens:
+        away_pen_label, away_pen = "POWER PLAY",    _strength(away_pens, home_pens)
+        home_pen_label, home_pen = "PENALTY KILL",  home_timer
+    elif away_pens > 0:
+        # Coincidental penalties - both labeled "EVEN STRENGTH"
+        # Left cell shows the strength state, right cell shows the next-change timer
+        timer_sec = min(away_t.penalty_remaining_sec, home_t.penalty_remaining_sec)
+        timer_str = (f"{timer_sec // 60:02d}:{timer_sec % 60:02d}" if timer_sec > 0 else "")
+        away_pen_label, away_pen = "EVEN STRENGTH", _strength(away_pens, home_pens)
+        home_pen_label, home_pen = "EVEN STRENGTH", timer_str
+    else:
+        away_pen_label, away_pen = "PENALTY", ""
+        home_pen_label, home_pen = "PENALTY", ""
+
     # specs: (label, value, value_color, label_color, border_color)
     # label_color stays vivid for readability; border_color is darker.
     specs = [
-        ("PENALTY", away_pen,             NEUTRAL_WHITE,  away_label_color, away_pen_border),
-        ("PERIOD",  state.period_label,   NEUTRAL_WHITE,  NEUTRAL_GRAY,     NEUTRAL_GRAY),
-        ("CLOCK",   state.clock if not is_final else "", CLOCK_RED, NEUTRAL_GRAY, NEUTRAL_GRAY),
-        ("PENALTY", home_pen,             NEUTRAL_WHITE,  home_label_color, home_pen_border),
+        (away_pen_label, away_pen,             NEUTRAL_WHITE,  away_label_color, away_pen_border),
+        ("PERIOD",       state.period_label,   NEUTRAL_WHITE,  NEUTRAL_GRAY,     NEUTRAL_GRAY),
+        ("CLOCK",        state.clock if not is_final else "", CLOCK_RED, NEUTRAL_GRAY, NEUTRAL_GRAY),
+        (home_pen_label, home_pen,             NEUTRAL_WHITE,  home_label_color, home_pen_border),
     ]
 
     label_h = max(8, int(status_h * 0.28))   # smaller label
     value_h = status_h - label_h - inner_pad - 2 * border_w   # most for value
 
-    # Match text sizes across all 4 cells: find the largest label scale that
-    # fits ALL labels in their cell width, and same for values. This ensures
-    # every cell looks visually consistent.
+    # Compute the unified label/value scales from the WIDEST POSSIBLE strings
+    # per role, not from the current state. This keeps text size stable as
+    # the clock counts down, penalty timers expire, period changes, etc.
+    # Without this, the min() of `_auto_fit_scale` over current values jumps
+    # every time any cell's content width changes.
     cell_inner_w_min = min(x1 - x0 for (x0, x1) in cells) - 2 * inner_pad - 2 * border_w
     cell_inner_w_min = max(1, cell_inner_w_min)
 
-    all_labels = [s[0] for s in specs]
+    LABEL_REFERENCES = ("EVEN STRENGTH", "PENALTY KILL", "POWER PLAY", "PERIOD", "CLOCK")
+    VALUE_REFERENCES = ("FINAL", "20:00", "5-ON-3")
+
     label_scale_unified = min(
         _auto_fit_scale(font, lbl, cell_inner_w_min, int(label_h * 0.85))
-        for lbl in all_labels
+        for lbl in LABEL_REFERENCES
     )
-
-    # Values: only consider non-empty values
-    all_values = [s[1] for s in specs if s[1]]
-    if all_values:
-        value_scale_unified = min(
-            _auto_fit_scale(font, v, cell_inner_w_min, int(value_h * 0.95))
-            for v in all_values
-        )
-    else:
-        value_scale_unified = 1
+    value_scale_unified = min(
+        _auto_fit_scale(font, v, cell_inner_w_min, int(value_h * 0.95))
+        for v in VALUE_REFERENCES
+    )
 
     for (x0, x1), (label, value, val_color, label_color, border_color) in zip(cells, specs):
         _rect_fill(img, x0, y_status_top, x1, y_status_bot, BG_DEEP)

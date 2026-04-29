@@ -37,7 +37,12 @@ class TeamState(BaseModel):
     faceoff_win_pct: int = 0
     # Penalty time remaining for this team's active power-play OPPONENT.
     # 0 = no active penalty. Seconds remaining for the renderer to format M:SS.
+    # When multiple penalties are active, this is the SOONEST-expiring one.
     penalty_remaining_sec: int = 0
+    # Number of currently-active skater-affecting penalties on this team.
+    # Used to derive on-ice strength (5-on-4, 5-on-3, etc).
+    # Excludes misconducts / game misconducts which don't reduce skater count.
+    active_penalty_count: int = 0
 
 
 class GameState(BaseModel):
