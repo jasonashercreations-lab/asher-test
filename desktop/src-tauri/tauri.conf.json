@@ -4,7 +4,8 @@
     "beforeBuildCommand": "",
     "beforeDevCommand": "",
     "devPath": "../../frontend/dist",
-    "distDir": "../../frontend/dist"
+    "distDir": "../../frontend/dist",
+    "withGlobalTauri": true
   },
   "package": {
     "productName": "NHL Scoreboard Studio",

@@ -1,32 +1,26 @@
+import { useEffect, useState } from 'react';
 import { useProjectStore } from '@/store/project';
 import { Section, Field, Switch, Input, Slider, Button, Select } from '@/components/ui/primitives';
 import type { OutputDevice } from '@/types/project';
-import { Trash2, Monitor, Cpu, Globe, ExternalLink, Maximize2, Power } from 'lucide-react';
+import { Trash2, Monitor, Cpu, Globe, Maximize2, Power } from 'lucide-react';
+import { isTauri, listMonitors, openScoreboardWindow, type MonitorInfo } from '@/lib/tauri';
 
 const SCOREBOARD_URL = 'http://127.0.0.1:8765/#/scoreboard';
 
-function openScoreboardWindow(opts: { fullscreen?: boolean; monitor?: number } = {}) {
-  // Always open against the backend port (Tauri's tauri.localhost won't work
-  // outside the app's webview).
-  const features = [
-    'menubar=no',
-    'toolbar=no',
-    'location=no',
-    'status=no',
-    `width=${1280}`,
-    `height=${720}`,
-  ];
+/** Browser fallback (non-Tauri). Best-effort fullscreen via requestFullscreen,
+ *  which may be blocked by the popup not having a user gesture. */
+function openScoreboardBrowserFallback(opts: { fullscreen?: boolean } = {}) {
+  const features = ['menubar=no', 'toolbar=no', 'location=no', 'status=no',
+                    'width=1280', 'height=720'];
   const win = window.open(SCOREBOARD_URL, '_blank', features.join(','));
   if (!win) {
     window.open(SCOREBOARD_URL, '_blank');
     return;
   }
   if (opts.fullscreen) {
-    // Best-effort: request fullscreen after the window loads.
     setTimeout(() => {
-      try {
-        win.document?.documentElement?.requestFullscreen?.();
-      } catch { /* user gesture may be required */ }
+      try { win.document?.documentElement?.requestFullscreen?.(); }
+      catch { /* user gesture required */ }
     }, 800);
   }
 }
@@ -108,31 +102,7 @@ function OutputEditor({ output, onChange }: { output: OutputDevice; onChange: (o
   }
 
   if (output.kind === 'window') {
-    return (
-      <>
-        <Field label="Fullscreen">
-          <Switch checked={output.fullscreen} onChange={(b) => onChange({ ...output, fullscreen: b })} />
-        </Field>
-        <Field label="Monitor">
-          <Input type="number" min={0} className="w-16 text-right" value={output.monitor}
-            onChange={(e) => onChange({ ...output, monitor: parseInt(e.target.value) || 0 })} />
-        </Field>
-        <Field label="Upscale">
-          <Input type="number" min={1} max={10} className="w-16 text-right" value={output.upscale}
-            onChange={(e) => onChange({ ...output, upscale: parseInt(e.target.value) || 1 })} />
-        </Field>
-        <Button
-          variant="accent"
-          className="w-full"
-          onClick={() => openScoreboardWindow({ fullscreen: output.fullscreen, monitor: output.monitor })}
-        >
-          <Maximize2 className="w-3.5 h-3.5" /> Open Window
-        </Button>
-        <p className="text-[10px] text-muted">
-          Drag the window to your target monitor. F11 toggles fullscreen if auto-fullscreen is blocked.
-        </p>
-      </>
-    );
+    return <WindowOutputEditor output={output} onChange={onChange} />;
   }
 
   // matrix
@@ -174,6 +144,96 @@ function OutputEditor({ output, onChange }: { output: OutputDevice; onChange: (o
         LED matrix output is only active when running on a Raspberry Pi with
         the rpi-rgb-led-matrix library installed.
       </p>
+    </>
+  );
+}
+
+function WindowOutputEditor({
+  output, onChange,
+}: { output: Extract<OutputDevice, { kind: 'window' }>; onChange: (o: OutputDevice) => void }) {
+  const [monitors, setMonitors] = useState<MonitorInfo[] | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  const tauri = isTauri();
+
+  useEffect(() => {
+    if (!tauri) return;
+    listMonitors().then((m) => {
+      setMonitors(m);
+      // If saved monitor index no longer valid, clamp to 0
+      if (m && (output.monitor < 0 || output.monitor >= m.length)) {
+        onChange({ ...output, monitor: 0 });
+      }
+    });
+  }, [tauri]);
+
+  const handleOpen = async () => {
+    setBusy(true);
+    setErr(null);
+    try {
+      if (tauri) {
+        const ok = await openScoreboardWindow({
+          monitorIndex: output.monitor,
+          fullscreen: output.fullscreen,
+        });
+        if (!ok) setErr('Tauri command failed - see devtools');
+      } else {
+        openScoreboardBrowserFallback({ fullscreen: output.fullscreen });
+      }
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <>
+      <Field label="Fullscreen">
+        <Switch checked={output.fullscreen} onChange={(b) => onChange({ ...output, fullscreen: b })} />
+      </Field>
+
+      <Field label="Display">
+        {tauri && monitors ? (
+          monitors.length === 0 ? (
+            <span className="text-[10px] text-muted">No displays detected</span>
+          ) : (
+            <Select
+              className="w-44"
+              value={String(output.monitor)}
+              onChange={(e) => onChange({ ...output, monitor: parseInt(e.target.value) || 0 })}
+            >
+              {monitors.map((m) => (
+                <option key={m.index} value={m.index}>
+                  {m.index}: {m.name} — {m.width}×{m.height}{m.is_primary ? ' (primary)' : ''}
+                </option>
+              ))}
+            </Select>
+          )
+        ) : (
+          <Input type="number" min={0} className="w-16 text-right" value={output.monitor}
+            onChange={(e) => onChange({ ...output, monitor: parseInt(e.target.value) || 0 })} />
+        )}
+      </Field>
+
+      <Field label="Upscale">
+        <Input type="number" min={1} max={10} className="w-16 text-right" value={output.upscale}
+          onChange={(e) => onChange({ ...output, upscale: parseInt(e.target.value) || 1 })} />
+      </Field>
+
+      <Button variant="accent" className="w-full" onClick={handleOpen} disabled={busy}>
+        <Maximize2 className="w-3.5 h-3.5" /> {busy ? 'Opening…' : 'Open Window'}
+      </Button>
+
+      {err && <p className="text-[10px] text-red-400">{err}</p>}
+
+      {tauri ? (
+        <p className="text-[10px] text-muted">
+          Opens a native window on the chosen display. Fullscreen is applied automatically.
+        </p>
+      ) : (
+        <p className="text-[10px] text-muted">
+          Browser fallback: drag the popup to your target monitor; F11 toggles fullscreen.
+        </p>
+      )}
     </>
   );
 }

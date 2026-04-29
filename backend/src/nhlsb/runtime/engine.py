@@ -5,22 +5,19 @@ Single-instance per process. Frontend connects via WS to receive live frames.
 
 Clock behavior
 --------------
-Two independent cadences keep the displayed clock smooth without hammering
-the NHL API:
+Play:
+    Clock updates ONLY when the NHL API poll returns a fresh value. No
+    local ticking, no snap-back artifacts. The displayed clock advances
+    in chunks the size of `poll_interval_sec`.
 
-  - Local 1Hz tick: every 1.0s the engine advances the displayed clock by
-    1 second (during play) OR recomputes intermission remaining from an
-    anchor (during intermission). This is what produces visible smoothness.
-
-  - API poll: every `poll_interval_sec` (default 5s) the engine fetches
-    ground truth from the NHL API. During *play*, the API clock value is
-    snapped into state. During *intermission*, the clock is owned entirely
-    by the local anchor; the API is only used to detect the start and end
-    of intermission and to refresh non-clock fields (scores, stats).
-
-Stoppage detection (play only): if the same API clock value is observed
-on 3 consecutive polls, the local tick is frozen until the API moves
-again (whistle, TV timeout, etc.).
+Intermission:
+    The first poll that reports `inIntermission=true` captures
+    `(now, secondsRemaining)` as an anchor. The local 1Hz tick then
+    recomputes `remaining = initial − (now − started_at)` every second
+    so the intermission clock counts down smoothly without further API
+    involvement. The API is only re-consulted to detect when the next
+    period starts (intermission anchor is cleared and the clock snaps
+    to the new period's API value).
 """
 from __future__ import annotations
 import asyncio
@@ -64,17 +61,13 @@ class Engine:
         self._task: asyncio.Task | None = None
         self._running = False
 
-        # ---- clock-tracking state (reset on project change) ----
-        # Anchor for intermission countdown: (wall_time_when_captured, seconds_at_capture).
-        # While set, the local tick computes remaining = initial - (now - started_at)
-        # and the API clock is ignored.
+        # ---- intermission anchor (reset on project change) ----
+        # (wall_time_when_captured, seconds_at_capture). While set, the local
+        # tick computes remaining = initial − (now − started_at) and the API
+        # clock is ignored.
         self._intermission_anchor: Optional[Tuple[float, int]] = None
-        # Whether the last API poll reported intermission. Used to detect transitions.
+        # Whether the last API poll reported intermission. Used for transitions.
         self._was_intermission: bool = False
-        # Last few API clock values during play, for stoppage detection.
-        self._recent_api_clocks: list[str] = []
-        # Whether the local play tick is currently frozen (whistle / stoppage).
-        self._clock_frozen: bool = False
 
     # ---- subscription ----
     def subscribe(self, fn: Subscriber):
@@ -86,15 +79,11 @@ class Engine:
     # ---- project mutation ----
     def set_project(self, project: Project) -> None:
         self.project = project
-        # Reset cached state shape for source changes
         if isinstance(project.source, MockSource):
             self.state = project.source.state
-        # Reset clock-tracking state - new project may be a different game / source
+        # Reset intermission tracking - new project may be a different game
         self._intermission_anchor = None
         self._was_intermission = False
-        self._recent_api_clocks.clear()
-        self._clock_frozen = False
-        # Re-render immediately
         asyncio.create_task(self.broadcast_frame())
 
     # ---- frame production ----
@@ -147,7 +136,6 @@ class Engine:
         last_state_fetch = 0.0
         last_local_tick = time.time()
 
-        # Render initial frame immediately
         await self.broadcast_frame()
 
         while self._running:
@@ -155,7 +143,7 @@ class Engine:
             interval = (self.project.source.poll_interval_sec
                         if isinstance(self.project.source, NHLSource) else 0.5)
 
-            # ---- API poll for ground truth ----
+            # ---- API poll: drives play clock and intermission start/end ----
             if now - last_state_fetch >= interval:
                 fetched = await self._fetch_state()
                 last_state_fetch = now
@@ -163,9 +151,9 @@ class Engine:
                 if fetched is not None:
                     await self._apply_fetched(fetched, now)
 
-            # ---- Local 1Hz tick between API polls ----
+            # ---- 1Hz tick: only for the intermission countdown ----
             if now - last_local_tick >= 1.0:
-                if self._tick_local_clock(now):
+                if self._tick_intermission(now):
                     await self.broadcast_frame()
                 last_local_tick = now
 
@@ -173,91 +161,50 @@ class Engine:
 
     async def _apply_fetched(self, fetched: GameState, now: float) -> None:
         """Merge a fresh API state into self.state, handling intermission
-        transitions and stoppage tracking. May broadcast a frame."""
+        transitions. May broadcast a frame."""
         in_int = fetched.intermission
 
-        # --- Intermission transition: PLAY -> INT ---
+        # --- PLAY -> INT: capture anchor, broadcast ---
         if in_int and not self._was_intermission:
             initial_sec = _parse_clock(fetched.clock)
-            # Anchor the countdown to the moment the API confirmed intermission.
             self._intermission_anchor = (now, initial_sec)
-            self._recent_api_clocks.clear()
-            self._clock_frozen = False
             self.state = fetched
             self._was_intermission = True
             await self.broadcast_frame()
             return
 
-        # --- Intermission transition: INT -> PLAY ---
+        # --- INT -> PLAY: clear anchor, snap to API ---
         if not in_int and self._was_intermission:
             self._intermission_anchor = None
-            self._recent_api_clocks.clear()
-            self._clock_frozen = False
             self.state = fetched
             self._was_intermission = False
             await self.broadcast_frame()
             return
 
-        # --- Continuing intermission ---
-        # Refresh scores / stats / period label from API but DO NOT touch
-        # the clock - the local anchor owns it, smooth and uninterrupted.
+        # --- Continuing intermission: refresh non-clock fields, preserve local clock ---
         if in_int:
             preserved_clock = self.state.clock
             self.state = fetched
             self.state.clock = preserved_clock
             return
 
-        # --- Active play: snap clock to API, track for stoppage ---
-        new_clock = fetched.clock or ""
-        self._recent_api_clocks.append(new_clock)
-        if len(self._recent_api_clocks) > 3:
-            self._recent_api_clocks.pop(0)
-        self._clock_frozen = (
-            len(self._recent_api_clocks) >= 3
-            and len(set(self._recent_api_clocks)) == 1
-        )
+        # --- Active play: take API state as-is. No local ticking, no snap. ---
         self.state = fetched
         await self.broadcast_frame()
 
-    def _tick_local_clock(self, now: float) -> bool:
-        """Advance the displayed clock by 1 second of wall time.
-        Returns True if state changed (caller should re-broadcast)."""
+    def _tick_intermission(self, now: float) -> bool:
+        """Recompute the intermission clock from the anchor. Returns True if
+        the displayed value changed."""
         if not isinstance(self.project.source, NHLSource):
             return False
-
-        # ---- Intermission: compute remaining from anchor ----
-        # Smooth, monotonic, API-independent. Stops at 00:00 until the API
-        # reports the next period started (handled in _apply_fetched).
-        if self.state.intermission and self._intermission_anchor is not None:
-            started_at, initial_sec = self._intermission_anchor
-            elapsed = int(now - started_at)
-            remaining = max(0, initial_sec - elapsed)
-            new_clock = _format_clock(remaining)
-            if new_clock == self.state.clock:
-                return False
-            self.state.clock = new_clock
-            return True
-
-        # ---- Active play: decrement by 1s ----
-        if self._clock_frozen:
+        if not (self.state.intermission and self._intermission_anchor is not None):
             return False
-        period = (self.state.period_label or "").upper()
-        if period in ("FINAL", "INT.", ""):
-            return False
-        total = _parse_clock(self.state.clock)
-        if total <= 0:
-            return False
-        total -= 1
-        new_clock = _format_clock(total)
+        started_at, initial_sec = self._intermission_anchor
+        elapsed = int(now - started_at)
+        remaining = max(0, initial_sec - elapsed)
+        new_clock = _format_clock(remaining)
         if new_clock == self.state.clock:
             return False
-        # Tick down active penalty timers in lockstep with game clock
-        if self.state.away.penalty_remaining_sec > 0:
-            self.state.away.penalty_remaining_sec = max(
-                0, self.state.away.penalty_remaining_sec - 1)
-        if self.state.home.penalty_remaining_sec > 0:
-            self.state.home.penalty_remaining_sec = max(
-                0, self.state.home.penalty_remaining_sec - 1)
         self.state.clock = new_clock
         return True
 

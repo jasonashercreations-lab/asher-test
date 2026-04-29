@@ -76,8 +76,10 @@ function Editor() {
 }
 
 function App() {
-  // Simple route check - /scoreboard goes to fullscreen mode, anything else is editor
-  const isFullscreen = window.location.pathname === '/scoreboard'
+  // Route check: native scoreboard windows are tagged via initialization_script
+  // before any JS runs. Browser fallback uses /scoreboard or #/scoreboard.
+  const isFullscreen = (window as any).__NHLSB_SCOREBOARD__ === true
+                    || window.location.pathname === '/scoreboard'
                     || window.location.hash === '#/scoreboard';
   return isFullscreen ? <FullscreenScoreboard /> : <Editor />;
 }
