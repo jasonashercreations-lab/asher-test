@@ -142,12 +142,38 @@ export function LayoutPanel() {
       </Section>
 
       <Section title="Stat rows">
+        <div className="text-[10px] text-muted mb-2">
+          Use ▲▼ to reorder. The order here is the top-to-bottom order in the
+          stats grid.
+        </div>
         {L.stats.map((row, i) => (
-          <div key={row.field} className="flex items-center gap-2">
+          <div key={row.field} className="flex items-center gap-1">
             <Switch
               checked={row.enabled}
               onChange={(b) => update((p) => { p.layout.stats[i].enabled = b; })}
             />
+            <button
+              disabled={i === 0}
+              onClick={() => update((p) => {
+                const arr = p.layout.stats;
+                [arr[i - 1], arr[i]] = [arr[i], arr[i - 1]];
+              })}
+              className="px-1.5 py-0.5 text-xs rounded border border-border bg-panel-2 hover:bg-border disabled:opacity-30 disabled:cursor-not-allowed"
+              title="Move up"
+            >
+              ▲
+            </button>
+            <button
+              disabled={i === L.stats.length - 1}
+              onClick={() => update((p) => {
+                const arr = p.layout.stats;
+                [arr[i], arr[i + 1]] = [arr[i + 1], arr[i]];
+              })}
+              className="px-1.5 py-0.5 text-xs rounded border border-border bg-panel-2 hover:bg-border disabled:opacity-30 disabled:cursor-not-allowed"
+              title="Move down"
+            >
+              ▼
+            </button>
             <Input
               value={row.label}
               className="flex-1"

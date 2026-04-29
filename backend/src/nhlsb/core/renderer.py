@@ -528,25 +528,26 @@ def render(project: Project, state: GameState,
             cw_v = val_col_w - 2 * inner_pad
             cw_l = label_col_w - 2 * inner_pad
             ch = row_h - 2 * inner_pad
-            target_h = int(ch * 0.65)
+            # Values fill ~80% of cell height, labels fill ~70%
+            target_h_val = int(ch * 0.80)
+            target_h_lbl = int(ch * 0.70)
 
-            # Away value (in away secondary color)
-            fs = _auto_fit_scale(font, a_val, max(1, cw_v), target_h)
+            # Away value (in away accent color) - scales independently per cell
+            fs = _auto_fit_scale(font, a_val, max(1, cw_v), target_h_val)
             tw, th = font.measure(a_val, scale=fs)
             font.draw(img,
                       x_aval + (val_col_w - tw) // 2,
                       ry0 + (row_h - th) // 2,
                       a_val, away_stat_color, scale=fs)
-            # Home value (in home secondary color)
-            fs = _auto_fit_scale(font, h_val, max(1, cw_v), target_h)
+            # Home value (in home accent color) - scales independently per cell
+            fs = _auto_fit_scale(font, h_val, max(1, cw_v), target_h_val)
             tw, th = font.measure(h_val, scale=fs)
             font.draw(img,
                       x_hval + (val_col_w - tw) // 2,
                       ry0 + (row_h - th) // 2,
                       h_val, home_stat_color, scale=fs)
             # Label (white)
-            target_lh = int(ch * 0.55)
-            fs = _auto_fit_scale(font, row.label, max(1, cw_l), target_lh)
+            fs = _auto_fit_scale(font, row.label, max(1, cw_l), target_h_lbl)
             tw, th = font.measure(row.label, scale=fs)
             font.draw(img,
                       x_lbl + (label_col_w - tw) // 2,

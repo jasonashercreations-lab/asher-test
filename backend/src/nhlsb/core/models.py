@@ -115,7 +115,7 @@ class Layout(BaseModel):
         StatRow(field="pim",              label="PIM"),
         StatRow(field="takeaways",        label="T.AWAYS"),
         StatRow(field="giveaways",        label="G.AWAYS"),
-        StatRow(field="faceoff_win_pct",  label="FO%",      enabled=False),
+        StatRow(field="faceoff_win_pct",  label="FACEOFF",  enabled=False),
     ])
 
 
