@@ -75,6 +75,15 @@ export const api = {
   // Per-output preview thumbnail URL (uses cache-busting query string).
   outputPreviewUrl: (idx: number): string => u(`/api/output/${idx}/preview.png?t=${Date.now()}`),
 
+  // Trigger a goal banner animation (mock testing)
+  triggerGoal: (team: string, side: 'away' | 'home', durationSec = 3.0):
+      Promise<{ ok: boolean; team: string; side: string }> =>
+    fetch(u('/api/animation/goal'), {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ team, side, duration_sec: durationSec }),
+    }).then((r) => j(r)),
+
   // Backwards-compat alias
   uploadSprite:  async (file: File): Promise<{ path: string }> => {
     const fd = new FormData();

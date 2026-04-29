@@ -317,6 +317,29 @@ async def health():
     return {"ok": True, "bundled": getattr(sys, "frozen", False)}
 
 
+# -------- Goal animation control --------
+class GoalAnimPayload(BaseModel):
+    team: str
+    side: str   # 'away' or 'home'
+    duration_sec: float = 3.0
+
+
+@app.post("/api/animation/goal")
+async def trigger_goal(payload: GoalAnimPayload):
+    """Manually trigger a goal banner animation (mock testing).
+
+    The live engine will also call engine.trigger_goal_animation() automatically
+    when an NHL goal event is detected; this endpoint exists so the editor can
+    preview the animation against a mock game state.
+    """
+    ok = engine.trigger_goal_animation(payload.team, payload.side,
+                                       duration_sec=payload.duration_sec)
+    if not ok:
+        raise HTTPException(404, f"no animation file for "
+                                  f"{payload.team.upper()}_{payload.side.upper()}")
+    return {"ok": True, "team": payload.team.upper(), "side": payload.side.lower()}
+
+
 # -------- Assets --------
 ALLOWED_KINDS = ("sprites", "fonts", "logos", "banners")
 ALLOWED_EXTS = {

@@ -213,7 +213,18 @@ def _paste_banner_fill(img, banner, x0, y0, x1, y1):
 
 def render(project: Project, state: GameState,
            assets_root: Path | None = None,
-           show_period_splash: bool = False) -> Image.Image:
+           show_period_splash: bool = False,
+           goal_animation: dict | None = None) -> Image.Image:
+    """Render the scoreboard.
+
+    Args:
+        goal_animation: optional dict with keys
+            'team' (3-letter abbrev), 'side' ('away'|'home'),
+            'elapsed' (sec since trigger), 'duration' (sec total)
+        causes a goal-banner GIF frame to be overlaid on the team-banner row.
+        Engine populates this; CLI tests can pass it directly or set it as
+        an attr on `state`.
+    """
     L: Layout = project.layout
     T: Theme = project.theme
     W, H = L.width, L.height
@@ -221,11 +232,10 @@ def render(project: Project, state: GameState,
     # ===== Game state (needed early for theme) =====
     away_t = state.away
     home_t = state.home
-    # Allow callers to pass the splash flag either via kwarg or via a
-    # transient attribute on `state` (engine.py uses the latter for backward
-    # compatibility with code that doesn't know about the kwarg).
     if not show_period_splash:
         show_period_splash = bool(getattr(state, "show_period_splash", False))
+    if goal_animation is None:
+        goal_animation = getattr(state, "goal_animation", None)
     away_colors = teams.colors_for(away_t.abbrev,
                                    project.team_overrides.get(away_t.abbrev))
     home_colors = teams.colors_for(home_t.abbrev,
@@ -395,6 +405,51 @@ def render(project: Project, state: GameState,
     _hline(img, x_mid, bx1, by1 - border_w, home_banner_border, border_w)
     _vline(img, bx0, by0, by1, away_banner_border, border_w)
     _vline(img, bx1 - border_w, by0, by1, home_banner_border, border_w)
+
+    # ===== Goal-banner animation overlay =====
+    # If a goal animation is currently playing, sample the appropriate GIF
+    # frame and paste it inside the banner row (between the borders).
+    if goal_animation and assets_root is not None:
+        try:
+            anim_team = goal_animation.get("team", "").upper()
+            anim_side = goal_animation.get("side", "").lower()
+            elapsed = float(goal_animation.get("elapsed", 0))
+            gif_path = (assets_root / "animations" / "goal_banner"
+                        / f"{anim_team}_{anim_side.upper()}.gif")
+            if gif_path.exists():
+                from PIL import Image as _Img
+                gif = _Img.open(gif_path)
+                # Compute current frame from elapsed time + GIF duration
+                n_frames = getattr(gif, "n_frames", 1)
+                frame_durations_ms = []
+                for fi in range(n_frames):
+                    gif.seek(fi)
+                    frame_durations_ms.append(gif.info.get("duration", 33))
+                total_ms = sum(frame_durations_ms) or 1
+                # Loop the GIF if elapsed exceeds its native length
+                t_ms = int(elapsed * 1000) % total_ms
+                acc = 0
+                target_idx = 0
+                for fi, dur in enumerate(frame_durations_ms):
+                    acc += dur
+                    if t_ms < acc:
+                        target_idx = fi
+                        break
+                gif.seek(target_idx)
+                frame = gif.convert("RGB")
+                # Fit inside the banner row (between borders)
+                inner_x0 = bx0 + border_w
+                inner_x1 = bx1 - border_w
+                inner_y0_b = by0 + border_w
+                inner_y1_b = by1 - border_w
+                target_w = max(1, inner_x1 - inner_x0)
+                target_h = max(1, inner_y1_b - inner_y0_b)
+                resized = frame.resize((target_w, target_h),
+                                       _Img.Resampling.LANCZOS)
+                img.paste(resized, (inner_x0, inner_y0_b))
+        except Exception:
+            # Animation overlay must never break a render
+            pass
 
     # ============================================================
     #  ROW 3 - STATUS (4 cells with gaps, all with bold borders)

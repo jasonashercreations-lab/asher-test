@@ -213,11 +213,28 @@ function MockEditor() {
     <>
       <Section title="Quick actions">
         <div className="grid grid-cols-2 gap-1">
-          <Button onClick={() => set((st) => { st.away.score += 1; })}>
+          <Button onClick={() => {
+            set((st) => { st.away.score += 1; });
+            // Also trigger the banner animation so we can preview it
+            void api.triggerGoal(s.away.abbrev || 'WSH', 'away').catch(() => {});
+          }}>
             <Plus className="w-3 h-3" /> Goal AWAY
           </Button>
-          <Button onClick={() => set((st) => { st.home.score += 1; })}>
+          <Button onClick={() => {
+            set((st) => { st.home.score += 1; });
+            void api.triggerGoal(s.home.abbrev || 'CAR', 'home').catch(() => {});
+          }}>
             <Plus className="w-3 h-3" /> Goal HOME
+          </Button>
+          <Button onClick={() => {
+            void api.triggerGoal(s.away.abbrev || 'WSH', 'away').catch(() => {});
+          }}>
+            ▶ Anim AWAY
+          </Button>
+          <Button onClick={() => {
+            void api.triggerGoal(s.home.abbrev || 'CAR', 'home').catch(() => {});
+          }}>
+            ▶ Anim HOME
           </Button>
           <Button onClick={() => set((st) => {
             st.away.penalty_remaining_sec = 120;

@@ -87,12 +87,59 @@ class Engine:
         self._live_game_cache: list[int] = []
         self._live_game_cache_at: float = 0.0
 
+        # ---- goal-banner animation state ----
+        # When a goal is detected (or triggered manually for mock), the engine
+        # records (team_abbrev, side, started_at, duration_sec). The renderer
+        # overlays the corresponding GIF frame onto the team-banner row while
+        # active. After duration_sec elapses the slot clears.
+        self._goal_anim: Optional[Tuple[str, str, float, float]] = None
+        # Cache of decoded GIF frames per (team, side) so we don't re-open the
+        # GIF on every render call.
+        self._goal_anim_cache: dict[tuple[str, str],
+                                    tuple[list, int]] = {}   # (frames, frame_ms)
+
     # ---- subscription ----
     def subscribe(self, fn: Subscriber):
         self._subscribers.add(fn)
 
     def unsubscribe(self, fn: Subscriber):
         self._subscribers.discard(fn)
+
+    # ---- goal-animation control ----
+    def trigger_goal_animation(self, team: str, side: str,
+                               duration_sec: float = 3.0) -> bool:
+        """Start playing the goal banner animation for the given team/side.
+
+        side: 'away' or 'home'. duration_sec: how long to play the overlay
+        before it clears (the GIF itself is ~2.5s + the engine holds it
+        slightly longer so it doesn't snap away mid-loop).
+
+        Returns True if the GIF file exists and the animation was queued.
+        """
+        if side not in ("away", "home"):
+            return False
+        gif = (self.assets_root / "animations" / "goal_banner"
+               / f"{team.upper()}_{side.upper()}.gif")
+        if not gif.exists():
+            return False
+        self._goal_anim = (team.upper(), side.lower(), time.time(),
+                           float(duration_sec))
+        # Re-render immediately so the user sees it kick off.
+        asyncio.create_task(self.broadcast_frame())
+        return True
+
+    def goal_animation_active(self) -> Optional[dict]:
+        """If a goal animation is currently playing, returns the metadata the
+        renderer needs to find/decode the right GIF frame. Otherwise None."""
+        if self._goal_anim is None:
+            return None
+        team, side, started_at, duration = self._goal_anim
+        elapsed = time.time() - started_at
+        if elapsed >= duration:
+            self._goal_anim = None
+            return None
+        return {"team": team, "side": side,
+                "elapsed": elapsed, "duration": duration}
 
     # ---- project mutation ----
     def set_project(self, project: Project) -> None:
@@ -112,14 +159,16 @@ class Engine:
 
     # ---- frame production ----
     def render_frame(self) -> bytes:
-        # Pass splash flag to renderer via a transient state attr. Done this
-        # way (rather than a model field) so it doesn't get serialized into
-        # saved projects - it's pure runtime presentation state.
+        # Pass splash flag to renderer via a transient state attr.
         try:
             self.state.show_period_splash = (time.time() < self._splash_until)
         except Exception:
             pass
-        img = renderer.render(self.project, self.state, assets_root=self.assets_root)
+        img = renderer.render(
+            self.project, self.state,
+            assets_root=self.assets_root,
+            goal_animation=self.goal_animation_active(),
+        )
         buf = io.BytesIO()
         img.save(buf, format="PNG", optimize=False)
         return buf.getvalue()
@@ -245,6 +294,7 @@ class Engine:
         self._running = True
         last_state_fetch = 0.0
         last_local_tick = time.time()
+        last_anim_frame = 0.0
 
         await self.broadcast_frame()
 
@@ -262,7 +312,6 @@ class Engine:
 
             if now - last_local_tick >= 1.0:
                 changed = self._tick_intermission(now)
-                # Splash window expiry also requires a re-render
                 splash_just_ended = (self._splash_until > 0
                                      and now >= self._splash_until
                                      and now - self._splash_until < 1.0)
@@ -270,7 +319,18 @@ class Engine:
                     await self.broadcast_frame()
                 last_local_tick = now
 
-            await asyncio.sleep(0.1)
+            # While a goal animation is playing, push frames at ~30fps so the
+            # GIF actually animates on subscribers.
+            if self._goal_anim is not None and now - last_anim_frame >= 0.033:
+                if self.goal_animation_active() is not None:
+                    await self.broadcast_frame()
+                    last_anim_frame = now
+                else:
+                    # Animation just ended - one final clean frame
+                    await self.broadcast_frame()
+                    last_anim_frame = now
+
+            await asyncio.sleep(0.03 if self._goal_anim is not None else 0.1)
 
     async def _apply_fetched(self, fetched: GameState, now: float) -> None:
         in_int = fetched.intermission
