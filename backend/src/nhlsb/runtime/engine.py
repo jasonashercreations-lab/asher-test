@@ -88,15 +88,15 @@ class Engine:
         self._live_game_cache_at: float = 0.0
 
         # ---- goal-banner animation state ----
-        # When a goal is detected (or triggered manually for mock), the engine
-        # records (team_abbrev, side, started_at, duration_sec). The renderer
-        # overlays the corresponding GIF frame onto the team-banner row while
-        # active. After duration_sec elapses the slot clears.
         self._goal_anim: Optional[Tuple[str, str, float, float]] = None
-        # Cache of decoded GIF frames per (team, side) so we don't re-open the
-        # GIF on every render call.
-        self._goal_anim_cache: dict[tuple[str, str],
-                                    tuple[list, int]] = {}   # (frames, frame_ms)
+        # Decoded frames cached per (team, side) so we don't re-open the GIF
+        # on every render call. Format: {(TEAM, side): (frames, durations_ms, total_ms)}
+        self._goal_anim_cache: dict = {}
+        # Cached static scoreboard image (without the banner row): rendered
+        # once at goal-anim start, reused for every animation frame so we only
+        # paste the GIF onto the banner instead of re-rendering 1080x1350.
+        self._scoreboard_static_cache = None
+        self._scoreboard_static_band: tuple[int, int, int, int] | None = None
 
     # ---- subscription ----
     def subscribe(self, fn: Subscriber):
@@ -106,27 +106,81 @@ class Engine:
         self._subscribers.discard(fn)
 
     # ---- goal-animation control ----
+    def _load_goal_animation(self, team: str, side: str):
+        """Decode the GIF once and cache (frames as RGB, frame_durations_ms,
+        total_ms). Subsequent triggers reuse the cache."""
+        key = (team.upper(), side.lower())
+        if key in self._goal_anim_cache:
+            return self._goal_anim_cache[key]
+        gif_path = (self.assets_root / "animations" / "goal_banner"
+                    / f"{key[0]}_{key[1].upper()}.gif")
+        if not gif_path.exists():
+            return None
+        from PIL import Image as _Img
+        gif = _Img.open(gif_path)
+        n = getattr(gif, "n_frames", 1)
+        frames = []
+        durations = []
+        for i in range(n):
+            gif.seek(i)
+            frames.append(gif.convert("RGB").copy())
+            durations.append(gif.info.get("duration", 33))
+        total = sum(durations) or 1
+        entry = (frames, durations, total)
+        self._goal_anim_cache[key] = entry
+        return entry
+
     def trigger_goal_animation(self, team: str, side: str,
                                duration_sec: float = 3.0) -> bool:
         """Start playing the goal banner animation for the given team/side.
-
-        side: 'away' or 'home'. duration_sec: how long to play the overlay
-        before it clears (the GIF itself is ~2.5s + the engine holds it
-        slightly longer so it doesn't snap away mid-loop).
-
         Returns True if the GIF file exists and the animation was queued.
-        """
+
+        The actual scoreboard cache build happens in a background task so the
+        API call returns instantly. The first WS push goes out as soon as the
+        cache is ready (~1s on first ever trigger; ~10ms on subsequent ones
+        because the GIF + scoreboard caches are already warm)."""
         if side not in ("away", "home"):
             return False
-        gif = (self.assets_root / "animations" / "goal_banner"
-               / f"{team.upper()}_{side.upper()}.gif")
-        if not gif.exists():
+        cache = self._load_goal_animation(team, side)
+        if cache is None:
             return False
+        natural_sec = cache[2] / 1000.0
+        actual_duration = max(duration_sec, natural_sec + 0.2)
         self._goal_anim = (team.upper(), side.lower(), time.time(),
-                           float(duration_sec))
-        # Re-render immediately so the user sees it kick off.
-        asyncio.create_task(self.broadcast_frame())
+                           actual_duration)
+        # Background task: build cache, then push first frame
+        asyncio.create_task(self._start_goal_anim_async(actual_duration))
         return True
+
+    async def _start_goal_anim_async(self, actual_duration: float):
+        """Run the (potentially slow) scoreboard cache build off the API
+        request thread, then push the first animation frame."""
+        loop = asyncio.get_event_loop()
+        def build():
+            base = renderer.render(
+                self.project, self.state,
+                assets_root=self.assets_root,
+                goal_animation=None,
+            )
+            return base
+        try:
+            base = await loop.run_in_executor(None, build)
+            self._scoreboard_static_cache = base.copy()
+            self._scoreboard_static_band = getattr(
+                base, "banner_band",
+                (0, int(self.project.layout.score_h * self.project.layout.height),
+                 self.project.layout.width,
+                 int((self.project.layout.score_h + 0.13) * self.project.layout.height))
+            )
+            # Reset elapsed origin so the GIF starts at frame 0 when the user
+            # actually sees it (not when they clicked the button).
+            if self._goal_anim is not None:
+                team, side, _, dur = self._goal_anim
+                self._goal_anim = (team, side, time.time(), dur)
+        except Exception:
+            self._scoreboard_static_cache = None
+            self._scoreboard_static_band = None
+        await self.broadcast_frame()
 
     def goal_animation_active(self) -> Optional[dict]:
         """If a goal animation is currently playing, returns the metadata the
@@ -137,9 +191,29 @@ class Engine:
         elapsed = time.time() - started_at
         if elapsed >= duration:
             self._goal_anim = None
+            self._scoreboard_static_cache = None
             return None
         return {"team": team, "side": side,
                 "elapsed": elapsed, "duration": duration}
+
+    def get_goal_anim_frame(self, elapsed_sec: float):
+        """Return the PIL.Image RGB frame for the active goal animation at
+        `elapsed_sec`, or None if no animation is active."""
+        if self._goal_anim is None:
+            return None
+        team, side, _, _ = self._goal_anim
+        cache = self._load_goal_animation(team, side)
+        if cache is None:
+            return None
+        frames, durations, total = cache
+        # Loop the GIF if elapsed exceeds its native length
+        t_ms = int(elapsed_sec * 1000) % total
+        acc = 0
+        for fi, dur in enumerate(durations):
+            acc += dur
+            if t_ms < acc:
+                return frames[fi]
+        return frames[-1]
 
     # ---- project mutation ----
     def set_project(self, project: Project) -> None:
@@ -164,13 +238,59 @@ class Engine:
             self.state.show_period_splash = (time.time() < self._splash_until)
         except Exception:
             pass
-        img = renderer.render(
-            self.project, self.state,
-            assets_root=self.assets_root,
-            goal_animation=self.goal_animation_active(),
-        )
+
+        anim = self.goal_animation_active()
+        if anim is not None:
+            from PIL import Image as _Img
+            if self._scoreboard_static_cache is None or self._scoreboard_static_band is None:
+                # First frame of this animation - render full scoreboard with
+                # NO goal-anim overlay, capture the banner band coords.
+                base = renderer.render(
+                    self.project, self.state,
+                    assets_root=self.assets_root,
+                    goal_animation=None,
+                )
+                self._scoreboard_static_cache = base.copy()
+                # Renderer attaches `.banner_band` = (x0, y0, x1, y1).
+                # Fall back to a simple band if (older renderer) it's missing.
+                self._scoreboard_static_band = getattr(
+                    base, "banner_band",
+                    (0, int(self.project.layout.score_h * self.project.layout.height),
+                     self.project.layout.width,
+                     int((self.project.layout.score_h + 0.13) * self.project.layout.height))
+                )
+
+            # Get the GIF frame for this elapsed time
+            gif_frame = self.get_goal_anim_frame(anim["elapsed"])
+            if gif_frame is None:
+                img = renderer.render(self.project, self.state,
+                                      assets_root=self.assets_root,
+                                      goal_animation=anim)
+            else:
+                # Paste GIF frame over the banner row of the cached scoreboard.
+                img = self._scoreboard_static_cache.copy()
+                bx0, by0, bx1, by1 = self._scoreboard_static_band
+                target_w = max(1, bx1 - bx0)
+                target_h = max(1, by1 - by0)
+                if gif_frame.size != (target_w, target_h):
+                    gif_frame = gif_frame.resize((target_w, target_h),
+                                                 _Img.Resampling.BILINEAR)
+                img.paste(gif_frame, (bx0, by0))
+        else:
+            img = renderer.render(
+                self.project, self.state,
+                assets_root=self.assets_root,
+                goal_animation=None,
+            )
+
         buf = io.BytesIO()
-        img.save(buf, format="PNG", optimize=False)
+        # During goal animation, encode as JPEG - 5-10x faster than PNG and
+        # the perceptual quality at q=85 is indistinguishable for this content.
+        # Outside animation, PNG so the static preview is pixel-perfect.
+        if anim is not None:
+            img.save(buf, format="JPEG", quality=85, optimize=False)
+        else:
+            img.save(buf, format="PNG", optimize=False)
         return buf.getvalue()
 
     async def broadcast_frame(self):
@@ -295,6 +415,7 @@ class Engine:
         last_state_fetch = 0.0
         last_local_tick = time.time()
         last_anim_frame = 0.0
+        ANIM_FRAME_DT = 1.0 / 30.0   # 30fps cadence for smooth playback
 
         await self.broadcast_frame()
 
@@ -303,13 +424,32 @@ class Engine:
             interval = (self.project.source.poll_interval_sec
                         if isinstance(self.project.source, NHLSource) else 0.5)
 
-            if now - last_state_fetch >= interval:
+            # State fetch (don't run during goal animation - it can stall the
+            # event loop for ~200ms during a network hiccup, which kills
+            # animation fluidity).
+            if self._goal_anim is None and now - last_state_fetch >= interval:
                 fetched = await self._fetch_state()
                 last_state_fetch = now
                 self.last_fetch_at = now
                 if fetched is not None:
                     await self._apply_fetched(fetched, now)
 
+            # Goal animation: tight 30fps push regardless of other work
+            if self._goal_anim is not None:
+                if now - last_anim_frame >= ANIM_FRAME_DT:
+                    if self.goal_animation_active() is not None:
+                        await self.broadcast_frame()
+                        last_anim_frame = now
+                    else:
+                        # Animation just ended - one final clean frame
+                        await self.broadcast_frame()
+                        last_anim_frame = now
+                # Sleep just long enough to hit the next frame deadline
+                next_frame_in = max(0.001, ANIM_FRAME_DT - (time.time() - last_anim_frame))
+                await asyncio.sleep(min(next_frame_in, 0.030))
+                continue
+
+            # Normal idle behavior: clock tick + slow sleep
             if now - last_local_tick >= 1.0:
                 changed = self._tick_intermission(now)
                 splash_just_ended = (self._splash_until > 0
@@ -319,18 +459,7 @@ class Engine:
                     await self.broadcast_frame()
                 last_local_tick = now
 
-            # While a goal animation is playing, push frames at ~30fps so the
-            # GIF actually animates on subscribers.
-            if self._goal_anim is not None and now - last_anim_frame >= 0.033:
-                if self.goal_animation_active() is not None:
-                    await self.broadcast_frame()
-                    last_anim_frame = now
-                else:
-                    # Animation just ended - one final clean frame
-                    await self.broadcast_frame()
-                    last_anim_frame = now
-
-            await asyncio.sleep(0.03 if self._goal_anim is not None else 0.1)
+            await asyncio.sleep(0.1)
 
     async def _apply_fetched(self, fetched: GameState, now: float) -> None:
         in_int = fetched.intermission

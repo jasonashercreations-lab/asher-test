@@ -704,4 +704,13 @@ def render(project: Project, state: GameState,
         img_rgba.paste(overlay_rgba, (0, 0), mask)
         img = img_rgba.convert("RGB")
 
+    # Attach banner band coordinates so callers (engine fast-path) know
+    # exactly where to overlay the goal animation without re-deriving math.
+    # PIL allows arbitrary attributes on Image objects.
+    inner_x0 = bx0 + border_w
+    inner_x1 = bx1 - border_w
+    inner_y0_b = by0 + border_w
+    inner_y1_b = by1 - border_w
+    img.banner_band = (inner_x0, inner_y0_b, inner_x1, inner_y1_b)
+
     return img
