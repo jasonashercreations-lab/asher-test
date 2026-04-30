@@ -50,6 +50,13 @@ export const api = {
     fetch(u('/api/teams')).then((r) => j(r)),
 
   gamesToday:    (): Promise<GameSummary[]> => fetch(u('/api/games/today')).then((r) => j<GameSummary[]>(r)),
+  gamesRange:    (start?: string, days = 7): Promise<Record<string, GameSummary[]>> => {
+    const qs = new URLSearchParams();
+    if (start) qs.set('start', start);
+    qs.set('days', String(days));
+    return fetch(u(`/api/games/range?${qs.toString()}`)).then((r) =>
+      j<Record<string, GameSummary[]>>(r));
+  },
   game:          (id: number): Promise<GameState> => fetch(u(`/api/games/${id}`)).then((r) => j<GameState>(r)),
 
   status:        (): Promise<BackendStatus> => fetch(u('/api/status')).then((r) => j<BackendStatus>(r)),
@@ -83,6 +90,63 @@ export const api = {
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ team, side, duration_sec: durationSec }),
     }).then((r) => j(r)),
+
+  // ---- Mock control (lightweight, no full project PUT) ----
+  mockSetPaused: (paused: boolean) =>
+    fetch(u('/api/mock/paused'), {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ paused }),
+    }).then((r) => j<{ ok: boolean }>(r)),
+
+  mockGoal: (side: 'away' | 'home') =>
+    fetch(u('/api/mock/goal'), {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ side }),
+    }).then((r) => j<{ ok: boolean }>(r)),
+
+  mockPenalty: (side: 'away' | 'home', durationSec = 120) =>
+    fetch(u('/api/mock/penalty'), {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ side, duration_sec: durationSec }),
+    }).then((r) => j<{ ok: boolean }>(r)),
+
+  mockClearPenalties: () =>
+    fetch(u('/api/mock/clear_penalties'), { method: 'POST' }).then((r) =>
+      j<{ ok: boolean }>(r)),
+
+  mockEndPeriod: () =>
+    fetch(u('/api/mock/end_period'), { method: 'POST' }).then((r) =>
+      j<{ ok: boolean }>(r)),
+
+  mockSetPeriod: (periodLabel: string) =>
+    fetch(u('/api/mock/period'), {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ period_label: periodLabel }),
+    }).then((r) => j<{ ok: boolean }>(r)),
+
+  mockSetClock: (clock: string) =>
+    fetch(u('/api/mock/clock'), {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ clock }),
+    }).then((r) => j<{ ok: boolean }>(r)),
+
+  mockSetTeam: (side: 'away' | 'home', abbrev: string) =>
+    fetch(u('/api/mock/team'), {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ side, abbrev }),
+    }).then((r) => j<{ ok: boolean }>(r)),
+
+  mockSetScore: (side: 'away' | 'home', score: number) =>
+    fetch(u('/api/mock/score'), {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ side, score }),
+    }).then((r) => j<{ ok: boolean }>(r)),
+
+  mockSetStat: (side: 'away' | 'home', field: string, value: number) =>
+    fetch(u('/api/mock/stat'), {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ side, field, value }),
+    }).then((r) => j<{ ok: boolean }>(r)),
 
   // Backwards-compat alias
   uploadSprite:  async (file: File): Promise<{ path: string }> => {

@@ -89,7 +89,7 @@ export type GameSource =
       auto_rotate: boolean;
       rotate_interval_sec: number;
     }
-  | { kind: 'mock'; state: GameState };
+  | { kind: 'mock'; state: GameState; paused?: boolean };
 
 export type OutputDevice =
   | { kind: 'window'; monitor: number; fullscreen: boolean; upscale: number }
@@ -115,6 +115,10 @@ export interface Project {
   sprite: SpriteSpec;
   source: GameSource;
   outputs: OutputDevice[];
+  /** Favorite team abbrev (e.g. "MTL"). Empty = no favorite set yet. */
+  favorite_team?: string;
+  /** Default intermission length in seconds for mock auto-flow. */
+  mock_intermission_sec?: number;
 }
 
 export interface GameSummary {
@@ -122,7 +126,11 @@ export interface GameSummary {
   away: string;
   home: string;
   state: string;
+  start_time_utc?: string | null;
+  date?: string;
 }
+
+export type GamesByDate = Record<string, GameSummary[]>;
 
 export interface BackendStatus {
   last_fetch_ok: boolean;

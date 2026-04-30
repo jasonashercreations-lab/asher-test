@@ -172,9 +172,13 @@ class MockSource(BaseModel):
                        blocks=14, pim=4, takeaways=2, giveaways=1),
         home=TeamState(abbrev="CAR", score=2, shots=25, hits=28,
                        blocks=8, pim=8, takeaways=3, giveaways=7),
-        period_label="INT.",
-        clock="04:40",
+        period_label="1ST",
+        clock="20:00",
     ))
+    # When True, the mock clock and any active penalty timers stop ticking.
+    # Toggled from the UI Pause/Play button. Defaults to True so the user
+    # can set up state without time advancing under them.
+    paused: bool = True
 
 
 GameSource = NHLSource | MockSource
@@ -215,14 +219,6 @@ class Project(BaseModel):
     name: str = "Untitled Scoreboard"
     theme: Theme = Field(default_factory=Theme)
     layout: Layout = Field(default_factory=Layout)
-    # Color preset name. One of:
-    #   csv_default      - matchup CSV-driven colors (recommended)
-    #   classic_bordered - bright team primaries with auto-swap
-    #   midnight         - deep navy + gold premium look
-    #   ice_rink         - light arctic palette
-    #   heritage         - sepia/warm vintage
-    #   neon             - electric arcade brights
-    #   stealth          - graphite monochrome with team color accents
     color_theme: Literal[
         "csv_default", "classic_bordered", "midnight", "ice_rink",
         "heritage", "neon", "stealth"
@@ -231,3 +227,11 @@ class Project(BaseModel):
     sprite: SpriteSpec = Field(default_factory=SpriteSpec)
     source: GameSource = Field(default_factory=NHLSource)
     outputs: list[OutputDevice] = Field(default_factory=lambda: [StreamOutput()])
+
+    # Favorite team abbreviation (e.g. "MTL"). Used to sort that team's games
+    # to the top of the live games list. Project-level value overrides the
+    # frontend's localStorage default. Empty string = no favorite.
+    favorite_team: str = ""
+    # Default intermission length in seconds for the mock source. Used both
+    # when "End period" is clicked AND for auto-flow when clock hits 0:00.
+    mock_intermission_sec: int = 1020  # 17 minutes default (real NHL)

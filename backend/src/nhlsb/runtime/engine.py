@@ -51,9 +51,40 @@ def _parse_clock(s: str) -> int:
         return 0
 
 
+# Alias used by the mock tick code for clarity
+_parse_clock_to_secs = _parse_clock
+
+
 def _format_clock(total: int) -> str:
     total = max(0, int(total))
     return f"{total // 60:02d}:{total % 60:02d}"
+
+
+# Period progression for the mock auto-flow
+_PERIOD_ORDER = ["1ST", "2ND", "3RD", "OT", "SO"]
+
+
+def _next_period_label(current: str) -> str | None:
+    """Return the period after `current`, or None if past the last one."""
+    cur = (current or "").upper()
+    if cur not in _PERIOD_ORDER:
+        return None
+    idx = _PERIOD_ORDER.index(cur)
+    if idx + 1 >= len(_PERIOD_ORDER):
+        return None
+    return _PERIOD_ORDER[idx + 1]
+
+
+def _period_starting_seconds(period_label: str) -> int:
+    """Standard starting clock value for each period type."""
+    p = (period_label or "").upper()
+    if p in ("1ST", "2ND", "3RD"):
+        return 1200  # 20:00
+    if p == "OT":
+        return 300   # 5:00 regular-season OT
+    if p == "SO":
+        return 0     # SO has no clock — pre-set to 0
+    return 1200
 
 
 class Engine:
@@ -86,6 +117,16 @@ class Engine:
         # Cache of today's live games for cycling
         self._live_game_cache: list[int] = []
         self._live_game_cache_at: float = 0.0
+
+        # ---- mock tick anchor ----
+        # Wall-clock time of the last 1Hz mock tick. Used so the mock clock
+        # decrements smoothly without depending on the engine loop's exact
+        # cadence. None = mock has never ticked (will be set on first tick).
+        self._mock_last_tick: Optional[float] = None
+        # Whether the mock state machine is currently in an "intermission"
+        # phase. Tracked here (not on GameState) so we can drive the auto-flow
+        # without polluting the public state model.
+        self._mock_in_intermission: bool = False
 
         # ---- goal-banner animation state ----
         self._goal_anim: Optional[Tuple[str, str, float, float]] = None
@@ -204,7 +245,11 @@ class Engine:
 
     def get_goal_anim_frame(self, elapsed_sec: float):
         """Return the PIL.Image RGB frame for the active goal animation at
-        `elapsed_sec`, or None if no animation is active."""
+        `elapsed_sec`, or None if no animation is active.
+
+        elapsed_sec is the FULL animation time (including pre-pulse). We
+        subtract pre-pulse to get the GIF playback time, then clamp to the
+        last frame instead of looping. This matches renderer.py's behavior."""
         if self._goal_anim is None:
             return None
         team, side, _, _ = self._goal_anim
@@ -212,8 +257,13 @@ class Engine:
         if cache is None:
             return None
         frames, durations, total = cache
-        # Loop the GIF if elapsed exceeds its native length
-        t_ms = int(elapsed_sec * 1000) % total
+        # Pre-pulse phase: GIF hasn't started, return first frame
+        GOAL_PRE_PULSE_SEC = 2.0
+        gif_play_sec = elapsed_sec - GOAL_PRE_PULSE_SEC
+        if gif_play_sec < 0:
+            return frames[0]
+        # Clamp to last frame instead of looping back to start
+        t_ms = min(int(gif_play_sec * 1000), total - 1)
         acc = 0
         for fi, dur in enumerate(durations):
             acc += dur
@@ -458,6 +508,9 @@ class Engine:
             # Normal idle behavior: clock tick + slow sleep
             if now - last_local_tick >= 1.0:
                 changed = self._tick_intermission(now)
+                # Mock state machine: clock countdown + auto period flow
+                if self._tick_mock(now):
+                    changed = True
                 splash_just_ended = (self._splash_until > 0
                                      and now >= self._splash_until
                                      and now - self._splash_until < 1.0)
@@ -505,7 +558,92 @@ class Engine:
         self.state = fetched
         await self.broadcast_frame()
 
-    def _tick_intermission(self, now: float) -> bool:
+    def _tick_mock(self, now: float) -> bool:
+        """Advance the mock state by 1 second when applicable.
+
+        Handles:
+        - Clock countdown during regular periods (paused = no-op)
+        - Auto-transition to intermission when clock hits 0:00
+        - Auto-transition to next period when intermission ends
+        - Penalty timer countdown (only during regular play, not intermission)
+        - Final period -> FINAL state (no more ticking)
+
+        Returns True if state changed (so caller can broadcast).
+        """
+        src = self.project.source
+        if not isinstance(src, MockSource):
+            return False
+        if src.paused:
+            self._mock_last_tick = now
+            return False
+        # First tick: just record the time, don't advance yet
+        if self._mock_last_tick is None:
+            self._mock_last_tick = now
+            return False
+        # Only advance once per real second
+        if now - self._mock_last_tick < 1.0:
+            return False
+        # Number of seconds elapsed since last tick (usually 1, possibly more
+        # if the loop got busy). Cap at 5s to avoid huge jumps.
+        secs_elapsed = min(5, int(now - self._mock_last_tick))
+        self._mock_last_tick = now
+
+        st = src.state
+        period = (st.period_label or "").upper()
+        if period == "FINAL":
+            return False  # game over, no ticking
+
+        clock_secs = _parse_clock_to_secs(st.clock)
+        changed = False
+
+        for _ in range(secs_elapsed):
+            if clock_secs > 0:
+                clock_secs -= 1
+                changed = True
+                # Tick down penalties only during regular play (not intermission)
+                if not self._mock_in_intermission:
+                    if st.away.penalty_remaining_sec > 0:
+                        st.away.penalty_remaining_sec = max(
+                            0, st.away.penalty_remaining_sec - 1)
+                        if st.away.penalty_remaining_sec == 0:
+                            st.away.active_penalty_count = 0
+                    if st.home.penalty_remaining_sec > 0:
+                        st.home.penalty_remaining_sec = max(
+                            0, st.home.penalty_remaining_sec - 1)
+                        if st.home.penalty_remaining_sec == 0:
+                            st.home.active_penalty_count = 0
+            else:
+                # Clock hit zero — handle the transition
+                changed = True
+                if self._mock_in_intermission:
+                    # End of intermission -> advance period and reset clock
+                    self._mock_in_intermission = False
+                    st.intermission = False
+                    next_label = _next_period_label(period)
+                    if next_label is None:
+                        # Past OT/SO -> FINAL
+                        st.period_label = "FINAL"
+                        st.clock = "00:00"
+                        clock_secs = 0
+                        period = "FINAL"
+                        break
+                    st.period_label = next_label
+                    period = next_label
+                    clock_secs = _period_starting_seconds(next_label)
+                else:
+                    # End of regular period -> enter intermission (unless OT/SO/FINAL)
+                    if period in ("OT", "SO"):
+                        # No intermission after OT/SO — go straight to FINAL
+                        st.period_label = "FINAL"
+                        clock_secs = 0
+                        period = "FINAL"
+                        break
+                    self._mock_in_intermission = True
+                    st.intermission = True
+                    clock_secs = self.project.mock_intermission_sec
+
+        st.clock = _format_clock(clock_secs)
+        return changed
         if not isinstance(self.project.source, NHLSource):
             return False
         if not (self.state.intermission and self._intermission_anchor is not None):
@@ -521,3 +659,145 @@ class Engine:
 
     def stop(self):
         self._running = False
+
+    # ============================================================
+    # MOCK ACTIONS — fast paths used by the UI's mock control panel.
+    # All assume project.source is a MockSource; quietly no-op otherwise.
+    # ============================================================
+
+    def _mock_state(self):
+        """Returns (MockSource, GameState) tuple, or (None, None) if not mock."""
+        src = self.project.source
+        if not isinstance(src, MockSource):
+            return None, None
+        return src, src.state
+
+    async def mock_set_paused(self, paused: bool) -> bool:
+        src, st = self._mock_state()
+        if src is None:
+            return False
+        src.paused = paused
+        if not paused:
+            # Reset the tick anchor so we don't immediately advance by the
+            # accumulated paused-time delta
+            self._mock_last_tick = time.time()
+        await self.broadcast_frame()
+        return True
+
+    async def mock_score_goal(self, side: str, fire_animation: bool = True) -> bool:
+        src, st = self._mock_state()
+        if src is None or side not in ("away", "home"):
+            return False
+        team_state = st.away if side == "away" else st.home
+        team_state.score += 1
+        if fire_animation and team_state.abbrev:
+            self.trigger_goal_animation(team_state.abbrev, side)
+        await self.broadcast_frame()
+        return True
+
+    async def mock_set_penalty(self, side: str, duration_sec: int = 120) -> bool:
+        src, st = self._mock_state()
+        if src is None or side not in ("away", "home"):
+            return False
+        team_state = st.away if side == "away" else st.home
+        team_state.penalty_remaining_sec = max(0, int(duration_sec))
+        team_state.active_penalty_count = max(1, team_state.active_penalty_count)
+        # Track PIM (penalty minutes) so it stays consistent
+        team_state.pim = (team_state.pim or 0) + max(1, duration_sec // 60)
+        await self.broadcast_frame()
+        return True
+
+    async def mock_clear_penalties(self) -> bool:
+        src, st = self._mock_state()
+        if src is None:
+            return False
+        st.away.penalty_remaining_sec = 0
+        st.home.penalty_remaining_sec = 0
+        st.away.active_penalty_count = 0
+        st.home.active_penalty_count = 0
+        await self.broadcast_frame()
+        return True
+
+    async def mock_end_period(self) -> bool:
+        """Force the clock to 0:00 — the tick loop will then auto-advance to
+        intermission (or FINAL after OT/SO) on the next tick."""
+        src, st = self._mock_state()
+        if src is None:
+            return False
+        st.clock = "00:00"
+        # If paused, do the transition immediately so the user sees it without
+        # having to unpause
+        if src.paused:
+            self._mock_last_tick = None  # force tick to do nothing on next pass
+            # Manually trigger one transition step
+            period = (st.period_label or "").upper()
+            if period in ("OT", "SO"):
+                st.period_label = "FINAL"
+            elif _next_period_label(period) is not None:
+                self._mock_in_intermission = True
+                st.intermission = True
+                st.clock = _format_clock(self.project.mock_intermission_sec)
+            else:
+                st.period_label = "FINAL"
+        await self.broadcast_frame()
+        return True
+
+    async def mock_set_period(self, period_label: str) -> bool:
+        """Stepper from the UI: sets period to the given label and resets the
+        clock to that period's standard starting value. Exits intermission if
+        we were in one."""
+        src, st = self._mock_state()
+        if src is None:
+            return False
+        label = (period_label or "").upper()
+        if label not in _PERIOD_ORDER and label != "FINAL":
+            return False
+        st.period_label = label
+        st.intermission = False
+        self._mock_in_intermission = False
+        if label == "FINAL":
+            st.clock = "00:00"
+        else:
+            st.clock = _format_clock(_period_starting_seconds(label))
+        await self.broadcast_frame()
+        return True
+
+    async def mock_set_clock(self, clock: str) -> bool:
+        src, st = self._mock_state()
+        if src is None:
+            return False
+        # Validate format
+        secs = _parse_clock(clock)
+        st.clock = _format_clock(secs)
+        await self.broadcast_frame()
+        return True
+
+    async def mock_set_team(self, side: str, abbrev: str) -> bool:
+        src, st = self._mock_state()
+        if src is None or side not in ("away", "home"):
+            return False
+        team_state = st.away if side == "away" else st.home
+        team_state.abbrev = (abbrev or "").upper()[:3]
+        await self.broadcast_frame()
+        return True
+
+    async def mock_set_score(self, side: str, score: int) -> bool:
+        src, st = self._mock_state()
+        if src is None or side not in ("away", "home"):
+            return False
+        team_state = st.away if side == "away" else st.home
+        team_state.score = max(0, int(score))
+        await self.broadcast_frame()
+        return True
+
+    async def mock_set_stat(self, side: str, field: str, value: int) -> bool:
+        """Generic stat setter: shots, hits, blocks, pim, takeaways, giveaways."""
+        src, st = self._mock_state()
+        if src is None or side not in ("away", "home"):
+            return False
+        if field not in ("shots", "hits", "blocks", "pim", "takeaways", "giveaways"):
+            return False
+        team_state = st.away if side == "away" else st.home
+        setattr(team_state, field, max(0, int(value)))
+        await self.broadcast_frame()
+        return True

@@ -23,7 +23,83 @@ def list_today_games() -> list[dict]:
         "away": g.get("awayTeam", {}).get("abbrev"),
         "home": g.get("homeTeam", {}).get("abbrev"),
         "state": g.get("gameState"),
+        "start_time_utc": g.get("startTimeUTC"),
     } for g in data.get("games", [])]
+
+
+def list_games_for_date(date_yyyy_mm_dd: str) -> list[dict]:
+    """Fetch games for a single date (YYYY-MM-DD).
+
+    NHL endpoint: /schedule/<date> returns up to a week of upcoming games
+    starting from <date>. Filter to just the requested day so we have day-level
+    granularity for the UI's day picker."""
+    try:
+        data = _get(f"/schedule/{date_yyyy_mm_dd}")
+    except Exception:
+        return []
+    out = []
+    for week in data.get("gameWeek", []) or []:
+        if week.get("date") != date_yyyy_mm_dd:
+            continue
+        for g in week.get("games", []) or []:
+            out.append({
+                "id": g.get("id"),
+                "away": g.get("awayTeam", {}).get("abbrev"),
+                "home": g.get("homeTeam", {}).get("abbrev"),
+                "state": g.get("gameState"),
+                "start_time_utc": g.get("startTimeUTC"),
+                "date": date_yyyy_mm_dd,
+            })
+    return out
+
+
+def list_games_range(start_date_yyyy_mm_dd: str, days: int = 7) -> dict[str, list[dict]]:
+    """Fetch games for `days` consecutive days starting at `start_date`.
+
+    Returns {date_str: [game_dict, ...]} so the frontend can show a day
+    picker with per-day game lists. The /schedule/<date> endpoint returns
+    a whole week at a time, so a single request usually covers the full
+    7-day window."""
+    from datetime import datetime, timedelta
+    out: dict[str, list[dict]] = {}
+    try:
+        start = datetime.strptime(start_date_yyyy_mm_dd, "%Y-%m-%d")
+    except Exception:
+        return out
+    # Initialize all days as empty so the frontend always sees the full window
+    for i in range(days):
+        d = (start + timedelta(days=i)).strftime("%Y-%m-%d")
+        out[d] = []
+
+    # The NHL schedule endpoint conveniently returns a week of data per call.
+    # Make one call for the start date; if our window extends past that week,
+    # make additional calls for each subsequent week.
+    cursor = start
+    end = start + timedelta(days=days)
+    while cursor < end:
+        cursor_str = cursor.strftime("%Y-%m-%d")
+        try:
+            data = _get(f"/schedule/{cursor_str}")
+        except Exception:
+            cursor += timedelta(days=7)
+            continue
+        for week in data.get("gameWeek", []) or []:
+            day_str = week.get("date")
+            if day_str not in out:
+                continue
+            for g in week.get("games", []) or []:
+                out[day_str].append({
+                    "id": g.get("id"),
+                    "away": g.get("awayTeam", {}).get("abbrev"),
+                    "home": g.get("homeTeam", {}).get("abbrev"),
+                    "state": g.get("gameState"),
+                    "start_time_utc": g.get("startTimeUTC"),
+                    "date": day_str,
+                })
+        # Advance to the next week (NHL weeks start on Mondays in the API
+        # response, but we don't care — just step by 7 days from cursor).
+        cursor += timedelta(days=7)
+    return out
 
 
 def find_live_game(prefer_team: Optional[str] = None) -> Optional[int]:

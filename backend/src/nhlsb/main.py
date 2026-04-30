@@ -238,6 +238,23 @@ async def games_today():
         raise HTTPException(502, str(e))
 
 
+@app.get("/api/games/range")
+async def games_range(start: str | None = None, days: int = 7):
+    """Return games for `days` consecutive days starting at `start` (YYYY-MM-DD).
+    Default start = today (UTC). Response shape:
+      { "YYYY-MM-DD": [game, ...], ... }
+    where each game has id, away, home, state, start_time_utc, date.
+    """
+    from datetime import datetime, timezone
+    if not start:
+        start = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    days = max(1, min(14, days))
+    try:
+        return await asyncio.to_thread(nhl.list_games_range, start, days)
+    except Exception as e:
+        raise HTTPException(502, str(e))
+
+
 @app.get("/api/games/{game_id}", response_model=GameState)
 async def get_game(game_id: int):
     try:
@@ -338,6 +355,136 @@ async def trigger_goal(payload: GoalAnimPayload):
         raise HTTPException(404, f"no animation file for "
                                   f"{payload.team.upper()}_{payload.side.upper()}")
     return {"ok": True, "team": payload.team.upper(), "side": payload.side.lower()}
+
+
+# -------- Mock action endpoints --------
+# Lightweight mutations for the editor's mock control panel. Avoid the
+# overhead of a full PUT /api/project for every button click.
+class MockSidePayload(BaseModel):
+    side: str  # "away" or "home"
+
+
+class MockPenaltyPayload(BaseModel):
+    side: str
+    duration_sec: int = 120
+
+
+class MockPausedPayload(BaseModel):
+    paused: bool
+
+
+class MockPeriodPayload(BaseModel):
+    period_label: str  # "1ST" / "2ND" / "3RD" / "OT" / "SO" / "FINAL"
+
+
+class MockClockPayload(BaseModel):
+    clock: str  # "MM:SS"
+
+
+class MockTeamPayload(BaseModel):
+    side: str
+    abbrev: str
+
+
+class MockScorePayload(BaseModel):
+    side: str
+    score: int
+
+
+class MockStatPayload(BaseModel):
+    side: str
+    field: str  # shots, hits, blocks, pim, takeaways, giveaways
+    value: int
+
+
+def _require_mock():
+    from .core.models import MockSource
+    if not isinstance(engine.project.source, MockSource):
+        raise HTTPException(409, "mock action requires source.kind=mock")
+
+
+@app.post("/api/mock/paused")
+async def mock_set_paused(payload: MockPausedPayload):
+    _require_mock()
+    await engine.mock_set_paused(payload.paused)
+    return {"ok": True, "paused": payload.paused}
+
+
+@app.post("/api/mock/goal")
+async def mock_score(payload: MockSidePayload):
+    _require_mock()
+    if payload.side not in ("away", "home"):
+        raise HTTPException(400, "side must be away|home")
+    await engine.mock_score_goal(payload.side, fire_animation=True)
+    return {"ok": True}
+
+
+@app.post("/api/mock/penalty")
+async def mock_penalty(payload: MockPenaltyPayload):
+    _require_mock()
+    if payload.side not in ("away", "home"):
+        raise HTTPException(400, "side must be away|home")
+    await engine.mock_set_penalty(payload.side, payload.duration_sec)
+    return {"ok": True}
+
+
+@app.post("/api/mock/clear_penalties")
+async def mock_clear_penalties():
+    _require_mock()
+    await engine.mock_clear_penalties()
+    return {"ok": True}
+
+
+@app.post("/api/mock/end_period")
+async def mock_end_period():
+    _require_mock()
+    await engine.mock_end_period()
+    return {"ok": True}
+
+
+@app.post("/api/mock/period")
+async def mock_period(payload: MockPeriodPayload):
+    _require_mock()
+    ok = await engine.mock_set_period(payload.period_label)
+    if not ok:
+        raise HTTPException(400, "invalid period label")
+    return {"ok": True, "period_label": payload.period_label.upper()}
+
+
+@app.post("/api/mock/clock")
+async def mock_clock(payload: MockClockPayload):
+    _require_mock()
+    await engine.mock_set_clock(payload.clock)
+    return {"ok": True}
+
+
+@app.post("/api/mock/team")
+async def mock_team(payload: MockTeamPayload):
+    _require_mock()
+    if payload.side not in ("away", "home"):
+        raise HTTPException(400, "side must be away|home")
+    await engine.mock_set_team(payload.side, payload.abbrev)
+    return {"ok": True}
+
+
+@app.post("/api/mock/score")
+async def mock_score_set(payload: MockScorePayload):
+    _require_mock()
+    if payload.side not in ("away", "home"):
+        raise HTTPException(400, "side must be away|home")
+    await engine.mock_set_score(payload.side, payload.score)
+    return {"ok": True}
+
+
+@app.post("/api/mock/stat")
+async def mock_stat(payload: MockStatPayload):
+    _require_mock()
+    if payload.side not in ("away", "home"):
+        raise HTTPException(400, "side must be away|home")
+    ok = await engine.mock_set_stat(payload.side, payload.field, payload.value)
+    if not ok:
+        raise HTTPException(400, "invalid stat field")
+    return {"ok": True}
 
 
 # -------- Assets --------
