@@ -104,15 +104,14 @@ def load_team_banner(assets_root: Path, abbrev: str,
                      side: str | None = None) -> Image.Image | None:
     """Look for a bundled per-team banner at assets/banners/teams/<ABBREV>.png.
 
-    Filename convention (the suffix describes which DISPLAY SIDE the banner
-    is for, not the team's role in the game):
+    Filename convention (intuitive mapping — suffix matches the team's role):
 
-        <ABBR>_HOME.png   shown on the LEFT (away-team) side of the scoreboard
-        <ABBR>_AWAY.png   shown on the RIGHT (home-team) side of the scoreboard
+        <ABBR>_AWAY.png   shown on the LEFT (away-team) side of the scoreboard
+        <ABBR>_HOME.png   shown on the RIGHT (home-team) side of the scoreboard
 
     So when NYR is the away team in a matchup (rendered on the left), the
-    renderer loads NYR_HOME.png. When BUF is the home team (rendered on the
-    right), it loads BUF_AWAY.png.
+    renderer loads NYR_AWAY.png. When BUF is the home team (rendered on the
+    right), it loads BUF_HOME.png.
 
     Falls back to <ABBR>.png if no side-specific file exists, so legacy
     single-banner setups keep working.
@@ -121,8 +120,8 @@ def load_team_banner(assets_root: Path, abbrev: str,
         return None
     base = assets_root / "banners" / "teams"
     abbr_up = abbrev.upper()
-    # Map side -> suffix using the inverted convention above
-    suffix_for_side = {"away": "HOME", "home": "AWAY"}
+    # Map side -> suffix (literal: away role uses _AWAY file, home uses _HOME)
+    suffix_for_side = {"away": "AWAY", "home": "HOME"}
     suffix = suffix_for_side.get(side)
     if suffix:
         side_candidate = base / f"{abbr_up}_{suffix}.png"
