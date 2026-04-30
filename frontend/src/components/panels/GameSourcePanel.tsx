@@ -1,13 +1,43 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useProjectStore } from '@/store/project';
 import { api } from '@/api/client';
-import { Button, Input, Section, Field, Switch, Slider } from '@/components/ui/primitives';
-import { FavoriteTeamModal } from '@/components/FavoriteTeamModal';
-import type { GameSummary } from '@/types/project';
+import { Button, Section, Field, Switch, Slider } from '@/components/ui/primitives';
+import { TeamPickerModal } from '@/components/TeamPickerModal';
+import type { GameSummary, BackendStatus } from '@/types/project';
 import {
-  RefreshCw, Radio, FlaskConical, CircleDot, Plus, Pause, Play,
-  Shield, Star, ChevronLeft, ChevronRight,
+  RefreshCw, Radio, FlaskConical, Plus, Pause, Play,
+  Shield, Star, ChevronLeft, ChevronRight, X, Clock, Calendar,
 } from 'lucide-react';
+
+/** Poll /api/status at the given interval and return the latest current_state.
+ *  Used by MockEditor so it sees the engine's authoritative state in real-time
+ *  instead of relying on the project file. */
+function useLiveState(intervalMs = 500) {
+  const [status, setStatus] = useState<BackendStatus | null>(null);
+  const mountedRef = useRef(true);
+  useEffect(() => {
+    mountedRef.current = true;
+    let cancelled = false;
+    const tick = async () => {
+      try {
+        const s = await api.status();
+        if (!cancelled && mountedRef.current) setStatus(s);
+      } catch { /* ignore */ }
+    };
+    tick();
+    const i = setInterval(tick, intervalMs);
+    return () => {
+      cancelled = true;
+      mountedRef.current = false;
+      clearInterval(i);
+    };
+  }, [intervalMs]);
+  return status?.current_state ?? null;
+}
+
+// =============================================================================
+// HELPERS
+// =============================================================================
 
 const FAVORITE_TEAM_LS_KEY = 'nhlsb.favorite_team';
 
@@ -22,7 +52,6 @@ function setGlobalFavorite(abbr: string) {
   } catch { /* ignore quota errors */ }
 }
 
-/** YYYY-MM-DD in user's local timezone. */
 function toLocalISODate(d: Date): string {
   const y = d.getFullYear();
   const m = String(d.getMonth() + 1).padStart(2, '0');
@@ -30,7 +59,6 @@ function toLocalISODate(d: Date): string {
   return `${y}-${m}-${day}`;
 }
 
-/** Short weekday + month/day for the day picker chip. */
 function formatDayChip(dateStr: string): { weekday: string; date: string; isToday: boolean } {
   const d = new Date(dateStr + 'T12:00:00');
   const today = toLocalISODate(new Date());
@@ -39,7 +67,6 @@ function formatDayChip(dateStr: string): { weekday: string; date: string; isToda
   return { weekday, date, isToday: dateStr === today };
 }
 
-/** Render UTC start time as "h:mm AM/PM" in user's local timezone. */
 function formatStartTime(utc: string | null | undefined): string {
   if (!utc) return '';
   try {
@@ -47,6 +74,19 @@ function formatStartTime(utc: string | null | undefined): string {
     return d.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
   } catch { return ''; }
 }
+
+function gameStateBadge(state: string): { label: string; color: string } {
+  const s = (state || '').toUpperCase();
+  if (s === 'LIVE') return { label: 'LIVE', color: 'text-red-400 font-bold' };
+  if (s === 'CRIT') return { label: 'CRIT', color: 'text-red-400 font-bold' };
+  if (s === 'FUT' || s === 'PRE') return { label: 'SCHED', color: 'text-amber-400' };
+  if (s === 'FINAL' || s === 'OFF') return { label: 'FINAL', color: 'text-muted' };
+  return { label: s || '—', color: 'text-muted' };
+}
+
+// =============================================================================
+// MAIN PANEL
+// =============================================================================
 
 export function GameSourcePanel() {
   const project = useProjectStore((s) => s.project);
@@ -81,16 +121,22 @@ export function GameSourcePanel() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // First-launch favorite-team prompt: triggered when project has no favorite
-  // AND no global localStorage value.
+  // First-launch favorite-team prompt: only when project has NO favorite AND
+  // no global localStorage value AND user hasn't explicitly cleared it.
   useEffect(() => {
     if (!project) return;
-    const projectFav = project.favorite_team || '';
+    const projectFav = project.favorite_team;
     const globalFav = getGlobalFavorite();
-    if (!projectFav && !globalFav) {
+    const hasShown = (() => {
+      try { return localStorage.getItem('nhlsb.favorite_prompt_shown') === '1'; }
+      catch { return false; }
+    })();
+    // Trigger only when both are undefined AND we've never shown the prompt
+    // (so users who chose "no favorite" don't get re-prompted)
+    if (projectFav === undefined && !globalFav && !hasShown) {
       setFirstLaunchModalOpen(true);
-    } else if (!projectFav && globalFav) {
-      // Migrate global favorite into the project
+    } else if (!projectFav && globalFav && projectFav !== '') {
+      // Migrate global favorite into the project (only if not explicitly cleared)
       update((p) => { p.favorite_team = globalFav; });
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -106,7 +152,7 @@ export function GameSourcePanel() {
     return out;
   }, [today]);
 
-  const favorite = project?.favorite_team || getGlobalFavorite() || '';
+  const favorite = project?.favorite_team ?? getGlobalFavorite() ?? '';
 
   const selectedGames = useMemo(() => {
     const list = gamesByDate[selectedDate] || [];
@@ -123,6 +169,28 @@ export function GameSourcePanel() {
   const src = project.source;
   const isNHL = src.kind === 'nhl';
 
+  // ---- Click handler for picking a game (FIX bug 9) ----
+  // If user is on Mock when they click an NHL game, automatically switch
+  // source to NHL and select that game.
+  const pickGame = (gameId: number | null) => {
+    update((p) => {
+      // Switch to NHL if not already
+      if (p.source.kind !== 'nhl') {
+        p.source = {
+          kind: 'nhl',
+          team_filter: gameId ? null : (favorite || null),
+          game_id: gameId,
+          poll_interval_sec: 5,
+          auto_rotate: false,
+          rotate_interval_sec: 0,
+        };
+      } else {
+        p.source.game_id = gameId;
+        p.source.team_filter = gameId ? null : (favorite || null);
+      }
+    });
+  };
+
   return (
     <div>
       <Section title="Source">
@@ -131,7 +199,7 @@ export function GameSourcePanel() {
             variant={isNHL ? 'accent' : 'default'}
             onClick={() => update((p) => {
               p.source = {
-                kind: 'nhl', team_filter: null, game_id: null,
+                kind: 'nhl', team_filter: favorite || null, game_id: null,
                 poll_interval_sec: 5, auto_rotate: false, rotate_interval_sec: 0,
               };
             })}
@@ -161,276 +229,351 @@ export function GameSourcePanel() {
         </div>
       </Section>
 
-      {isNHL && (
-        <Section title="Favorite team">
-          <div className="flex items-center gap-2">
-            <button
-              onClick={() => setFavoriteModalOpen(true)}
-              className="flex items-center gap-2 px-2 py-1.5 rounded border border-border bg-panel-2 hover:border-accent/60 transition-colors flex-1"
-            >
-              <Star className={`w-3 h-3 ${favorite ? 'text-amber-400 fill-amber-400' : 'text-muted'}`} />
-              {favorite ? (
-                <>
-                  <div className="w-3 h-4 rounded-sm" style={{ background: teams[favorite]?.primary || '#888' }} />
-                  <span className="font-mono font-bold text-xs">{favorite}</span>
-                  <span className="text-[10px] text-muted ml-auto">change</span>
-                </>
-              ) : (
-                <span className="text-xs text-muted">Tap to choose</span>
-              )}
-            </button>
-          </div>
+      {/* Favorite team — visible regardless of source. (FIX bug 7: clear button) */}
+      <Section title="Favorite team">
+        <div className="flex items-center gap-1">
+          <button
+            onClick={() => setFavoriteModalOpen(true)}
+            className="flex items-center gap-2 px-2 py-1.5 rounded border border-border bg-panel-2 hover:border-accent/60 transition-colors flex-1"
+          >
+            <Star className={`w-3 h-3 shrink-0 ${favorite ? 'text-amber-400 fill-amber-400' : 'text-muted'}`} />
+            {favorite ? (
+              <>
+                <div className="w-3 h-4 rounded-sm shrink-0" style={{ background: teams[favorite]?.primary || '#888' }} />
+                <span className="font-mono font-bold text-xs">{favorite}</span>
+                <span className="text-[10px] text-muted ml-auto">change</span>
+              </>
+            ) : (
+              <span className="text-xs text-muted">No favorite — tap to set</span>
+            )}
+          </button>
           {favorite && (
-            <p className="text-[10px] text-muted mt-1">
-              {favorite}'s games are pinned to the top of the list.
-            </p>
+            <button
+              onClick={() => {
+                setGlobalFavorite('');
+                update((p) => { p.favorite_team = ''; });
+              }}
+              className="w-7 h-7 rounded border border-border bg-panel-2 hover:border-red-400/60 flex items-center justify-center text-muted hover:text-red-400"
+              title="Clear favorite"
+              aria-label="Clear favorite team"
+            >
+              <X className="w-3 h-3" />
+            </button>
           )}
-        </Section>
-      )}
+        </div>
+      </Section>
 
       {isNHL && src.kind === 'nhl' && (
-        <>
-          <Section title="Auto-rotate">
-            <Field label="Auto-advance on FINAL">
-              <Switch
-                checked={src.auto_rotate}
-                onChange={(b) => update((p) => {
-                  if (p.source.kind === 'nhl') p.source.auto_rotate = b;
-                })}
-              />
-            </Field>
-            {src.auto_rotate && (
-              <Field label="Cycle every">
-                <div className="flex items-center gap-1">
-                  <div className="w-32">
-                    <Slider
-                      value={src.rotate_interval_sec}
-                      min={0} max={120} step={5}
-                      onChange={(v) => update((p) => {
-                        if (p.source.kind === 'nhl') p.source.rotate_interval_sec = Math.round(v);
-                      })}
-                    />
-                  </div>
-                  <span className="text-[10px] text-muted font-mono w-12 text-right">
-                    {src.rotate_interval_sec === 0 ? 'off' : `${src.rotate_interval_sec}s`}
-                  </span>
-                </div>
-              </Field>
-            )}
-          </Section>
-
-          <Section
-            title="Schedule"
-            action={
-              <button
-                onClick={refresh}
-                disabled={loading}
-                className="text-xs flex items-center gap-1 text-accent hover:underline disabled:opacity-50"
-                title="Refresh"
-              >
-                <RefreshCw className={`w-3 h-3 ${loading ? 'animate-spin' : ''}`} />
-              </button>
-            }
-          >
-            <div className="flex gap-1 overflow-x-auto pb-1 mb-2 -mx-1 px-1">
-              {dayKeys.map((d) => {
-                const { weekday, date, isToday } = formatDayChip(d);
-                const isSelected = d === selectedDate;
-                const count = (gamesByDate[d] || []).length;
-                return (
-                  <button
-                    key={d}
-                    onClick={() => setSelectedDate(d)}
-                    className={`shrink-0 px-2 py-1.5 rounded text-center min-w-[3.2rem] border transition-colors ${
-                      isSelected
-                        ? 'border-accent bg-panel-2 text-fg'
-                        : 'border-border bg-panel-2 text-muted hover:border-accent/50'
-                    }`}
-                  >
-                    <div className="text-[9px] uppercase font-bold tracking-wide">
-                      {isToday ? 'TODAY' : weekday}
-                    </div>
-                    <div className="text-[10px] font-mono">{date}</div>
-                    <div className="text-[9px] text-muted mt-0.5">
-                      {count > 0 ? `${count} game${count > 1 ? 's' : ''}` : '—'}
-                    </div>
-                  </button>
-                );
-              })}
-            </div>
-
-            <div className="space-y-1">
-              <button
-                onClick={() => update((p) => {
-                  if (p.source.kind === 'nhl') {
-                    p.source.game_id = null;
-                    p.source.team_filter = favorite || null;
-                  }
-                })}
-                className={`w-full px-2 py-1.5 rounded text-xs text-left flex items-center gap-2 border ${
-                  !src.game_id
-                    ? 'border-accent bg-panel-2'
-                    : 'border-border bg-panel-2 hover:border-accent/50'
-                }`}
-              >
-                <CircleDot className="w-3 h-3 text-muted" />
-                <span className="flex-1">
-                  {favorite
-                    ? `Auto-pick (prefer ${favorite}, fallback to first live)`
-                    : 'Auto-pick (first live game)'}
-                </span>
-              </button>
-              {selectedGames.map((g) => {
-                const apri = teams[g.away]?.primary || '#888';
-                const hpri = teams[g.home]?.primary || '#888';
-                const isActive = src.game_id === g.id;
-                const isFavGame = !!favorite && (g.away === favorite || g.home === favorite);
-                const time = formatStartTime(g.start_time_utc);
-                return (
-                  <button
-                    key={g.id}
-                    onClick={() => update((p) => {
-                      if (p.source.kind === 'nhl') {
-                        p.source.game_id = g.id;
-                        p.source.team_filter = null;
-                      }
-                    })}
-                    className={`w-full px-2 py-1.5 rounded text-xs flex items-center gap-2 border transition-colors ${
-                      isActive
-                        ? 'border-accent bg-panel-2'
-                        : 'border-border bg-panel-2 hover:border-accent/50'
-                    }`}
-                  >
-                    {isFavGame && <Star className="w-3 h-3 text-amber-400 fill-amber-400 shrink-0" />}
-                    <div className="w-2.5 h-6 rounded-sm shrink-0" style={{ background: apri }} />
-                    <span className="font-mono font-bold">{g.away}</span>
-                    <span className="text-muted">@</span>
-                    <span className="font-mono font-bold">{g.home}</span>
-                    <div className="w-2.5 h-6 rounded-sm shrink-0" style={{ background: hpri }} />
-                    {time && (
-                      <span className="text-[10px] text-muted ml-1">{time}</span>
-                    )}
-                    <span className={`flex-1 text-right text-[10px] ${
-                      g.state === 'LIVE' ? 'text-green-400'
-                      : g.state === 'FINAL' || g.state === 'OFF' ? 'text-muted'
-                      : 'text-amber-400'
-                    }`}>
-                      {g.state}
-                    </span>
-                  </button>
-                );
-              })}
-              {selectedGames.length === 0 && !loading && (
-                <p className="text-[10px] text-muted text-center py-3">
-                  No games scheduled for this day
-                </p>
-              )}
-            </div>
-          </Section>
-
-          <Section title="Polling">
-            <Field label="Refresh interval">
-              <div className="flex items-center gap-1">
-                <div className="w-24"><Slider
-                  value={src.poll_interval_sec}
-                  min={2} max={30} step={1}
-                  onChange={(v) => update((p) => {
-                    if (p.source.kind === 'nhl') p.source.poll_interval_sec = Math.round(v);
-                  })}
-                /></div>
-                <span className="text-[10px] text-muted w-10 text-right">{src.poll_interval_sec}s</span>
-              </div>
-            </Field>
-          </Section>
-        </>
+        <NHLSchedule
+          src={src}
+          dayKeys={dayKeys}
+          selectedDate={selectedDate}
+          setSelectedDate={setSelectedDate}
+          gamesByDate={gamesByDate}
+          selectedGames={selectedGames}
+          favorite={favorite}
+          teams={teams}
+          loading={loading}
+          refresh={refresh}
+          pickGame={pickGame}
+        />
       )}
 
-      {!isNHL && src.kind === 'mock' && <MockEditor />}
+      {!isNHL && src.kind === 'mock' && <MockEditor teams={teams} />}
 
-      <FavoriteTeamModal
+      <TeamPickerModal
         open={favoriteModalOpen}
         current={favorite}
+        title="Pick your favorite team"
+        subtitle="This team's games will be pinned to the top of the schedule."
+        allowClear={true}
         onSelect={(abbrev) => {
           setGlobalFavorite(abbrev);
           update((p) => { p.favorite_team = abbrev; });
+          try { localStorage.setItem('nhlsb.favorite_prompt_shown', '1'); } catch {}
         }}
         onClose={() => setFavoriteModalOpen(false)}
       />
-      <FavoriteTeamModal
+      <TeamPickerModal
         open={firstLaunchModalOpen}
         current=""
+        title="Welcome — pick your favorite team"
+        subtitle="We'll pin their games to the top of your schedule. You can change this any time."
+        allowClear={true}
         onSelect={(abbrev) => {
           setGlobalFavorite(abbrev);
           update((p) => { p.favorite_team = abbrev; });
+          try { localStorage.setItem('nhlsb.favorite_prompt_shown', '1'); } catch {}
           setFirstLaunchModalOpen(false);
         }}
-        onClose={() => setFirstLaunchModalOpen(false)}
+        onClose={() => {
+          try { localStorage.setItem('nhlsb.favorite_prompt_shown', '1'); } catch {}
+          setFirstLaunchModalOpen(false);
+        }}
       />
     </div>
   );
 }
 
+// =============================================================================
+// NHL SCHEDULE — cleaner layout (FIX bug 8)
+// =============================================================================
+
+function NHLSchedule({
+  src, dayKeys, selectedDate, setSelectedDate, gamesByDate,
+  selectedGames, favorite, teams, loading, refresh, pickGame,
+}: {
+  src: { kind: 'nhl'; game_id?: number | null; team_filter?: string | null;
+         poll_interval_sec: number; auto_rotate: boolean; rotate_interval_sec: number; };
+  dayKeys: string[];
+  selectedDate: string;
+  setSelectedDate: (d: string) => void;
+  gamesByDate: Record<string, GameSummary[]>;
+  selectedGames: GameSummary[];
+  favorite: string;
+  teams: Record<string, { primary: string; secondary: string }>;
+  loading: boolean;
+  refresh: () => void;
+  pickGame: (id: number | null) => void;
+}) {
+  const update = useProjectStore((s) => s.updateProject);
+
+  return (
+    <>
+      <Section
+        title="Schedule"
+        action={
+          <button
+            onClick={refresh}
+            disabled={loading}
+            className="text-xs flex items-center gap-1 text-accent hover:underline disabled:opacity-50"
+            title="Refresh schedule"
+          >
+            <RefreshCw className={`w-3 h-3 ${loading ? 'animate-spin' : ''}`} />
+          </button>
+        }
+      >
+        {/* Day picker — horizontal chip strip */}
+        <div className="flex gap-1 overflow-x-auto pb-1 mb-3 -mx-1 px-1">
+          {dayKeys.map((d) => {
+            const { weekday, date, isToday } = formatDayChip(d);
+            const isSelected = d === selectedDate;
+            const count = (gamesByDate[d] || []).length;
+            return (
+              <button
+                key={d}
+                onClick={() => setSelectedDate(d)}
+                className={`shrink-0 px-2.5 py-1.5 rounded text-center min-w-[3.4rem] border transition-colors ${
+                  isSelected
+                    ? 'border-accent bg-panel-2 text-fg'
+                    : 'border-border bg-panel-2 text-muted hover:border-accent/50'
+                }`}
+              >
+                <div className={`text-[9px] uppercase font-bold tracking-wide ${
+                  isToday ? 'text-accent' : ''
+                }`}>
+                  {isToday ? 'TODAY' : weekday}
+                </div>
+                <div className="text-[10px] font-mono">{date}</div>
+                <div className="text-[9px] text-muted mt-0.5">
+                  {count > 0 ? `${count} game${count > 1 ? 's' : ''}` : '—'}
+                </div>
+              </button>
+            );
+          })}
+        </div>
+
+        {/* Auto-pick option */}
+        <button
+          onClick={() => pickGame(null)}
+          className={`w-full px-2 py-1.5 rounded text-xs flex items-center gap-2 border mb-1 ${
+            !src.game_id
+              ? 'border-accent bg-panel-2'
+              : 'border-border bg-panel-2 hover:border-accent/50'
+          }`}
+        >
+          <Radio className="w-3 h-3 text-muted shrink-0" />
+          <span className="flex-1 text-left">
+            {favorite
+              ? <>Auto-pick <span className="font-mono font-bold">{favorite}</span> (or first live)</>
+              : <>Auto-pick (first live game)</>}
+          </span>
+        </button>
+
+        {/* Game list — cleaner layout */}
+        <div className="space-y-1">
+          {selectedGames.map((g) => {
+            const apri = teams[g.away]?.primary || '#888';
+            const hpri = teams[g.home]?.primary || '#888';
+            const isActive = src.game_id === g.id;
+            const isFavGame = !!favorite && (g.away === favorite || g.home === favorite);
+            const time = formatStartTime(g.start_time_utc);
+            const badge = gameStateBadge(g.state || '');
+            return (
+              <button
+                key={g.id}
+                onClick={() => pickGame(g.id)}
+                className={`w-full px-2 py-2 rounded text-xs flex items-center gap-2 border transition-colors text-left ${
+                  isActive
+                    ? 'border-accent bg-panel-2'
+                    : 'border-border bg-panel-2 hover:border-accent/50'
+                } ${isFavGame ? 'ring-1 ring-amber-400/30' : ''}`}
+              >
+                {isFavGame && <Star className="w-3 h-3 text-amber-400 fill-amber-400 shrink-0" />}
+                <div className="flex items-center gap-1.5 flex-1 min-w-0">
+                  <div className="w-1 h-7 rounded-sm shrink-0" style={{ background: apri }} />
+                  <span className="font-mono font-bold w-8 text-center">{g.away}</span>
+                  <span className="text-muted text-[10px]">@</span>
+                  <span className="font-mono font-bold w-8 text-center">{g.home}</span>
+                  <div className="w-1 h-7 rounded-sm shrink-0" style={{ background: hpri }} />
+                </div>
+                <div className="flex flex-col items-end gap-0.5 shrink-0">
+                  <span className={`text-[10px] uppercase font-mono ${badge.color}`}>
+                    {badge.label}
+                  </span>
+                  {time && (
+                    <span className="text-[9px] text-muted flex items-center gap-0.5">
+                      <Clock className="w-2.5 h-2.5" />
+                      {time}
+                    </span>
+                  )}
+                </div>
+              </button>
+            );
+          })}
+          {selectedGames.length === 0 && !loading && (
+            <p className="text-[10px] text-muted text-center py-4 flex items-center justify-center gap-1">
+              <Calendar className="w-3 h-3" />
+              No games scheduled for this day
+            </p>
+          )}
+        </div>
+      </Section>
+
+      <Section title="Auto-rotate">
+        <Field label="Cycle through live games">
+          <Switch
+            checked={src.auto_rotate}
+            onChange={(b) => update((p) => {
+              if (p.source.kind === 'nhl') p.source.auto_rotate = b;
+            })}
+          />
+        </Field>
+        {src.auto_rotate && (
+          <Field label="Cycle every">
+            <div className="flex items-center gap-1">
+              <div className="w-32">
+                <Slider
+                  value={src.rotate_interval_sec}
+                  min={0} max={120} step={5}
+                  onChange={(v) => update((p) => {
+                    if (p.source.kind === 'nhl') p.source.rotate_interval_sec = Math.round(v);
+                  })}
+                />
+              </div>
+              <span className="text-[10px] text-muted font-mono w-12 text-right">
+                {src.rotate_interval_sec === 0 ? 'off' : `${src.rotate_interval_sec}s`}
+              </span>
+            </div>
+          </Field>
+        )}
+      </Section>
+
+      <Section title="Polling">
+        <Field label="Refresh interval">
+          <div className="flex items-center gap-1">
+            <div className="w-24"><Slider
+              value={src.poll_interval_sec}
+              min={2} max={30} step={1}
+              onChange={(v) => update((p) => {
+                if (p.source.kind === 'nhl') p.source.poll_interval_sec = Math.round(v);
+              })}
+            /></div>
+            <span className="text-[10px] text-muted w-10 text-right">{src.poll_interval_sec}s</span>
+          </div>
+        </Field>
+      </Section>
+    </>
+  );
+}
+
+// =============================================================================
+// MOCK EDITOR
+// (FIX bug 1, 3, 4, 5, 6 — direct API calls instead of project mutation)
+// =============================================================================
+
 const PERIOD_ORDER = ['1ST', '2ND', '3RD', 'OT', 'SO', 'FINAL'] as const;
 
-function MockEditor() {
+function MockEditor({
+  teams,
+}: {
+  teams: Record<string, { primary: string; secondary: string }>;
+}) {
   const project = useProjectStore((s) => s.project);
-  const update = useProjectStore((s) => s.updateProject);
+  // Live state from backend polling — this is what the engine actually shows
+  const liveState = useLiveState(500);
+  const [busy, setBusy] = useState(false);
+
+  // Mock team picker modal
+  const [teamModal, setTeamModal] = useState<'away' | 'home' | null>(null);
+
   if (!project || project.source.kind !== 'mock') return null;
-  const s = project.source.state;
+
+  // Use live engine state if available (snappier, real-time), else fallback
+  // to project state. Engine state updates via WebSocket on every backend
+  // mutation, so the user sees their button clicks reflected with no lag.
+  const s = liveState || project.source.state;
   const paused = project.source.paused !== false;
   const intermissionSec = project.mock_intermission_sec ?? 1020;
 
-  const local = (mut: (st: typeof s) => void) =>
-    update((p) => { if (p.source.kind === 'mock') mut(p.source.state); });
+  // Helper: call API directly, no project mutation. Engine broadcasts the
+  // result via WebSocket which updates liveState. (Fixes laggy buttons.)
+  const callApi = async (fn: () => Promise<unknown>) => {
+    if (busy) return;
+    setBusy(true);
+    try { await fn(); } catch (e) { console.error('mock action failed', e); }
+    finally { setBusy(false); }
+  };
 
-  const togglePause = async () => {
+  const togglePause = () => {
     const newPaused = !paused;
-    update((p) => { if (p.source.kind === 'mock') p.source.paused = newPaused; });
-    try { await api.mockSetPaused(newPaused); } catch { /* WS reconciles */ }
-  };
-
-  const fireGoal = async (side: 'away' | 'home') => {
-    local((st) => {
-      if (side === 'away') st.away.score += 1;
-      else st.home.score += 1;
+    // We DO update the project for paused (it's a project field, not transient)
+    useProjectStore.getState().updateProject((p) => {
+      if (p.source.kind === 'mock') p.source.paused = newPaused;
     });
-    try { await api.mockGoal(side); } catch { /* ignore */ }
+    callApi(() => api.mockSetPaused(newPaused));
   };
 
-  const firePenalty = async (side: 'away' | 'home') => {
-    local((st) => {
-      const t = side === 'away' ? st.away : st.home;
-      t.penalty_remaining_sec = 120;
-      t.active_penalty_count = (t.active_penalty_count || 0) + 1;
-    });
-    try { await api.mockPenalty(side, 120); } catch { /* ignore */ }
-  };
+  const fireGoal = (side: 'away' | 'home') =>
+    callApi(() => api.mockGoal(side));
 
-  const clearPens = async () => {
-    local((st) => {
-      st.away.penalty_remaining_sec = 0;
-      st.home.penalty_remaining_sec = 0;
-      st.away.active_penalty_count = 0;
-      st.home.active_penalty_count = 0;
-    });
-    try { await api.mockClearPenalties(); } catch { /* ignore */ }
-  };
+  const firePenalty = (side: 'away' | 'home') =>
+    callApi(() => api.mockPenalty(side, 120));
 
-  const endPeriod = async () => {
-    local((st) => { st.clock = '00:00'; });
-    try { await api.mockEndPeriod(); } catch { /* ignore */ }
-  };
+  const clearPens = () =>
+    callApi(() => api.mockClearPenalties());
 
-  const stepPeriod = async (delta: 1 | -1) => {
+  const endPeriod = () =>
+    callApi(() => api.mockEndPeriod());
+
+  const stepPeriod = (delta: 1 | -1) => {
     const cur = (s.period_label || '').toUpperCase();
     const idx = PERIOD_ORDER.indexOf(cur as typeof PERIOD_ORDER[number]);
     if (idx < 0) return;
     const nextIdx = Math.max(0, Math.min(PERIOD_ORDER.length - 1, idx + delta));
     const next = PERIOD_ORDER[nextIdx];
     if (next === cur) return;
-    local((st) => { st.period_label = next; st.intermission = false; });
-    try { await api.mockSetPeriod(next); } catch { /* ignore */ }
+    callApi(() => api.mockSetPeriod(next));
   };
+
+  const setTeam = (side: 'away' | 'home', abbrev: string) =>
+    callApi(() => api.mockSetTeam(side, abbrev));
+
+  const setScore = (side: 'away' | 'home', score: number) =>
+    callApi(() => api.mockSetScore(side, score));
+
+  const setStat = (side: 'away' | 'home', field: string, value: number) =>
+    callApi(() => api.mockSetStat(side, field, value));
 
   return (
     <>
@@ -445,9 +588,9 @@ function MockEditor() {
         </div>
         <p className="text-[10px] text-muted mt-1">
           {paused
-            ? 'Clock paused — click Play to start counting down.'
+            ? 'Paused — click Play to start the clock counting down.'
             : s.intermission
-              ? 'Intermission — clock will auto-start the next period at 0:00.'
+              ? 'Intermission running — next period will auto-start at 0:00.'
               : 'Clock running. At 0:00 the period auto-ends and intermission begins.'}
         </p>
       </Section>
@@ -482,7 +625,9 @@ function MockEditor() {
               <Slider
                 value={intermissionSec}
                 min={30} max={1200} step={30}
-                onChange={(v) => update((p) => { p.mock_intermission_sec = Math.round(v); })}
+                onChange={(v) => useProjectStore.getState().updateProject((p) => {
+                  p.mock_intermission_sec = Math.round(v);
+                })}
               />
             </div>
             <span className="text-[10px] text-muted font-mono w-14 text-right">
@@ -491,7 +636,7 @@ function MockEditor() {
           </div>
         </Field>
         <Button onClick={endPeriod} className="mt-1">
-          End period now (jump to 0:00)
+          End period now → 0:00
         </Button>
       </Section>
 
@@ -503,10 +648,10 @@ function MockEditor() {
           <Button onClick={() => fireGoal('home')}>
             <Plus className="w-3 h-3" /> Goal HOME
           </Button>
-          <Button onClick={() => api.triggerGoal(s.away.abbrev || 'WSH', 'away').catch(() => {})}>
+          <Button onClick={() => callApi(() => api.triggerGoal(s.away.abbrev || 'WSH', 'away'))}>
             ▶ Replay anim AWAY
           </Button>
-          <Button onClick={() => api.triggerGoal(s.home.abbrev || 'CAR', 'home').catch(() => {})}>
+          <Button onClick={() => callApi(() => api.triggerGoal(s.home.abbrev || 'CAR', 'home'))}>
             ▶ Replay anim HOME
           </Button>
           <Button onClick={() => firePenalty('away')}>
@@ -519,61 +664,103 @@ function MockEditor() {
         </div>
       </Section>
 
+      {/* Mock teams use the same modal picker (FIX bug 5) */}
       <Section title="Away team">
-        <TeamFields side="away" />
+        <TeamRow
+          side="away"
+          team={s.away}
+          teamColor={teams[s.away.abbrev]?.primary}
+          onPickTeam={() => setTeamModal('away')}
+          onSetScore={(v) => setScore('away', v)}
+          onSetStat={(f, v) => setStat('away', f, v)}
+        />
       </Section>
       <Section title="Home team">
-        <TeamFields side="home" />
+        <TeamRow
+          side="home"
+          team={s.home}
+          teamColor={teams[s.home.abbrev]?.primary}
+          onPickTeam={() => setTeamModal('home')}
+          onSetScore={(v) => setScore('home', v)}
+          onSetStat={(f, v) => setStat('home', f, v)}
+        />
       </Section>
+
+      <TeamPickerModal
+        open={teamModal !== null}
+        current={teamModal === 'away' ? s.away.abbrev : (teamModal === 'home' ? s.home.abbrev : '')}
+        title={`Pick ${teamModal === 'away' ? 'AWAY' : 'HOME'} team`}
+        allowClear={false}
+        onSelect={(abbrev) => {
+          if (teamModal && abbrev) setTeam(teamModal, abbrev);
+        }}
+        onClose={() => setTeamModal(null)}
+      />
     </>
   );
 }
 
-function TeamFields({ side }: { side: 'away' | 'home' }) {
-  const project = useProjectStore((s) => s.project);
-  const update = useProjectStore((s) => s.updateProject);
-  if (!project || project.source.kind !== 'mock') return null;
-  const t = project.source.state[side];
-
-  const setLocal = (mut: (tt: typeof t) => void) =>
-    update((p) => { if (p.source.kind === 'mock') mut(p.source.state[side]); });
-
-  const setAbbrev = async (val: string) => {
-    const v = val.toUpperCase().slice(0, 3);
-    setLocal((tt) => { tt.abbrev = v; });
-    try { await api.mockSetTeam(side, v); } catch { /* ignore */ }
-  };
-  const setScore = async (val: number) => {
-    setLocal((tt) => { tt.score = Math.max(0, val); });
-    try { await api.mockSetScore(side, Math.max(0, val)); } catch { /* ignore */ }
-  };
-  const setStat = async (field: 'shots' | 'hits', val: number) => {
-    setLocal((tt) => { (tt as any)[field] = Math.max(0, val); });
-    try { await api.mockSetStat(side, field, Math.max(0, val)); } catch { /* ignore */ }
-  };
-
+function TeamRow({
+  side, team, teamColor, onPickTeam, onSetScore, onSetStat,
+}: {
+  side: 'away' | 'home';
+  team: { abbrev: string; score: number; shots: number; hits: number };
+  teamColor?: string;
+  onPickTeam: () => void;
+  onSetScore: (v: number) => void;
+  onSetStat: (field: string, v: number) => void;
+}) {
   return (
     <>
-      <Field label="Abbrev">
-        <Input className="w-16 text-right uppercase" maxLength={3}
-          value={t.abbrev}
-          onChange={(e) => setAbbrev(e.target.value)} />
+      <Field label="Team">
+        <button
+          onClick={onPickTeam}
+          className="flex items-center gap-2 px-2 py-1 rounded border border-border bg-panel-2 hover:border-accent/60 transition-colors"
+        >
+          <div className="w-3 h-4 rounded-sm" style={{ background: teamColor || '#888' }} />
+          <span className="font-mono font-bold text-xs">{team.abbrev}</span>
+          <span className="text-[10px] text-muted">change</span>
+        </button>
       </Field>
       <Field label="Score">
-        <Input className="w-16 text-right" type="number" min={0}
-          value={t.score}
-          onChange={(e) => setScore(parseInt(e.target.value) || 0)} />
+        <NumberStepper value={team.score} onChange={onSetScore} />
       </Field>
-      <Field label="Shots / Hits">
-        <div className="flex gap-1">
-          <Input className="w-12 text-right" type="number" min={0}
-            value={t.shots}
-            onChange={(e) => setStat('shots', parseInt(e.target.value) || 0)} />
-          <Input className="w-12 text-right" type="number" min={0}
-            value={t.hits}
-            onChange={(e) => setStat('hits', parseInt(e.target.value) || 0)} />
-        </div>
+      <Field label="Shots">
+        <NumberStepper value={team.shots} onChange={(v) => onSetStat('shots', v)} />
+      </Field>
+      <Field label="Hits">
+        <NumberStepper value={team.hits} onChange={(v) => onSetStat('hits', v)} />
       </Field>
     </>
+  );
+}
+
+/** +/- stepper that fires API on each click — no project mutation, no lag. */
+function NumberStepper({
+  value, onChange, min = 0, max = 999,
+}: {
+  value: number;
+  onChange: (v: number) => void;
+  min?: number;
+  max?: number;
+}) {
+  return (
+    <div className="flex items-center gap-1">
+      <button
+        onClick={() => onChange(Math.max(min, value - 1))}
+        disabled={value <= min}
+        className="w-6 h-6 rounded border border-border bg-panel-2 hover:border-accent/60 disabled:opacity-30 flex items-center justify-center"
+      >
+        <ChevronLeft className="w-3 h-3" />
+      </button>
+      <span className="font-mono w-8 text-center text-xs tabular-nums">{value}</span>
+      <button
+        onClick={() => onChange(Math.min(max, value + 1))}
+        disabled={value >= max}
+        className="w-6 h-6 rounded border border-border bg-panel-2 hover:border-accent/60 disabled:opacity-30 flex items-center justify-center"
+      >
+        <ChevronRight className="w-3 h-3" />
+      </button>
+    </div>
   );
 }

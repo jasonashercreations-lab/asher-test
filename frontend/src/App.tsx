@@ -86,7 +86,14 @@ function Editor() {
     );
   }
   if (!project) {
-    return <div className="h-screen flex items-center justify-center text-muted">Loading...</div>;
+    return (
+      <div className="h-screen flex items-center justify-center">
+        <div className="text-center">
+          <div className="text-muted text-sm mb-2">Starting backend…</div>
+          <div className="text-muted text-[10px]">First launch can take a few seconds.</div>
+        </div>
+      </div>
+    );
   }
 
   const ActivePanel = PANELS.find((p) => p.id === active)?.Component;
