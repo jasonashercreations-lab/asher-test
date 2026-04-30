@@ -148,7 +148,7 @@ class Engine:
         # Total animation = pre-pulse (1.5s) + GIF playback + tail fade (0.5s)
         # Must match the GOAL_PRE_PULSE_SEC / GOAL_TAIL_SEC constants in
         # renderer.py — change both together.
-        GOAL_PRE_PULSE_SEC = 1.5
+        GOAL_PRE_PULSE_SEC = 2.0
         GOAL_TAIL_SEC = 0.5
         full_anim_sec = GOAL_PRE_PULSE_SEC + natural_sec + GOAL_TAIL_SEC
         actual_duration = max(duration_sec, full_anim_sec)

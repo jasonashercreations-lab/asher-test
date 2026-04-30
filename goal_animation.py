@@ -48,7 +48,9 @@ from nhlsb.core import teams as teams_mod  # noqa: E402
 # ---- Configuration ----
 WIDTH, HEIGHT = 700, 120
 FPS = 40                         # bumped from 30 -> 40 for smoother motion
-DURATION_SEC = 2.8               # slightly longer to let easings breathe
+# Total animation: 0.85s sweep in + 7.0s hold + 0.85s sweep out = 8.7s.
+# With 2.0s pre-pulse and 0.5s tail added by renderer = ~11.2s end-to-end event.
+DURATION_SEC = 8.7
 N_FRAMES = int(FPS * DURATION_SEC)
 
 FONT_PATH = REPO / "assets" / "fonts" / "Anton-Regular.ttf"
@@ -59,9 +61,12 @@ SWEEP_BG_DIR = REPO / "assets" / "animations" / "sweep_backgrounds"
 ANIM_DIR = REPO / "assets" / "animations" / "goal_banner"
 ANIM_DIR.mkdir(parents=True, exist_ok=True)
 
-# Phase boundaries (fractions of total animation)
-SWEEP_IN_END = 0.28              # snappier entry
-TEXT_HOLD_END = 0.68             # longer hold so the moment lands
+# Phase boundaries (fractions of total animation).
+SWEEP_IN_END = 0.85 / 8.7           # ~0.098
+TEXT_HOLD_END = (0.85 + 7.0) / 8.7  # ~0.902
+
+# Speed of the GOAL! ticker in pixels per second of animation time.
+TICKER_SPEED_PX_PER_SEC = 140
 
 # Diagonal sweep edge softness (px). Larger = softer, more gradient blend.
 SWEEP_SLOPE = 110
@@ -219,16 +224,22 @@ def render_frame(team: str, side: str, frame_idx: int, n_frames: int,
     direction = "ltr" if side == "away" else "rtl"
     t = frame_idx / max(1, n_frames - 1)
 
-    # ---- Stage 1: sweep band (boomerang: same side enters and exits) ----
+    # ---- Stage 1: sweep band ----
+    # Logo rides in WITH the sweep (no separate pop phase).
+    # Boomerang behavior: sweep enters and exits on the same side.
     if t <= SWEEP_IN_END:
-        p = ease_out_quint(t / SWEEP_IN_END)
+        # Quintic-out: snappy deceleration, matches the reference pacing
+        local = t / SWEEP_IN_END
+        p = 1 - (1 - local) ** 5
         mask = diagonal_mask(WIDTH, HEIGHT, p, direction=direction)
         edge_p, edge_strength = p, max(0.0, 1.0 - p)
     elif t <= TEXT_HOLD_END:
         mask = Image.new("L", (WIDTH, HEIGHT), 255)
         edge_p, edge_strength = 1.0, 0.0
     else:
-        p = ease_in_quint((t - TEXT_HOLD_END) / (1.0 - TEXT_HOLD_END))
+        # Symmetric exit: quintic-in
+        local = (t - TEXT_HOLD_END) / (1.0 - TEXT_HOLD_END)
+        p = local ** 5
         mask = diagonal_mask(WIDTH, HEIGHT, 1.0 - p, direction=direction)
         edge_p, edge_strength = 1.0 - p, max(0.0, p)
 
@@ -251,6 +262,8 @@ def render_frame(team: str, side: str, frame_idx: int, n_frames: int,
         canvas.alpha_composite(hi_rgba)
 
     # ---- Stage 2: ride-along logo ----
+    # Logo slides in with the sweep, settles at rest position during hold,
+    # slides back out as the sweep retreats.
     logo = base_logo
     if logo is not None:
         logo_h = logo.height
@@ -263,22 +276,18 @@ def render_frame(team: str, side: str, frame_idx: int, n_frames: int,
             logo_start_x = WIDTH
 
         if t <= SWEEP_IN_END:
-            p = ease_out_quint(t / SWEEP_IN_END)
+            local = t / SWEEP_IN_END
+            p = 1 - (1 - local) ** 5   # quintic-out, matches sweep
             logo_x = int(logo_start_x + (logo_rest_x - logo_start_x) * p)
             logo_alpha = int(255 * min(1.0, p * 1.6))
             scale = 1.0
         elif t <= TEXT_HOLD_END:
-            local = (t - SWEEP_IN_END) / (TEXT_HOLD_END - SWEEP_IN_END)
-            if local < 0.25:
-                bp = local / 0.25
-                scale = 1.0 + (ease_out_back(bp, overshoot=1.6) - 1.0) * 0.08
-                scale = max(0.95, min(1.12, scale))
-            else:
-                scale = 1.0
+            scale = 1.0
             logo_x = logo_rest_x
             logo_alpha = 255
         else:
-            p = ease_in_quint((t - TEXT_HOLD_END) / (1.0 - TEXT_HOLD_END))
+            local = (t - TEXT_HOLD_END) / (1.0 - TEXT_HOLD_END)
+            p = local ** 5   # quintic-in, matches sweep exit
             logo_x = int(logo_rest_x + (logo_start_x - logo_rest_x) * p)
             logo_alpha = int(255 * (1.0 - p))
             scale = 1.0
@@ -293,9 +302,13 @@ def render_frame(team: str, side: str, frame_idx: int, n_frames: int,
                 scaled.putalpha(a)
             canvas.alpha_composite(scaled, (sx, sy))
 
-    # ---- Stage 3: GOAL! text ----
+    # ---- Stage 3: GOAL! ticker ----
+    # Multiple "GOAL!" tokens scroll across the banner during the hold phase,
+    # going the same direction as the sweep entry (LTR for AWAY, RTL for HOME).
     if t <= SWEEP_IN_END:
-        text_alpha = max(0.0, (t / SWEEP_IN_END - 0.6) / 0.4)
+        # Fade in as sweep enters
+        local = t / SWEEP_IN_END
+        text_alpha = max(0.0, (local - 0.4) / 0.6)
     elif t <= TEXT_HOLD_END:
         text_alpha = 1.0
     else:
@@ -304,7 +317,7 @@ def render_frame(team: str, side: str, frame_idx: int, n_frames: int,
 
     if text_alpha > 0.02:
         try:
-            text_font = ImageFont.truetype(str(FONT_PATH), 96)
+            text_font = ImageFont.truetype(str(FONT_PATH), 84)
         except Exception:
             text_font = ImageFont.load_default()
 
@@ -314,34 +327,70 @@ def render_frame(team: str, side: str, frame_idx: int, n_frames: int,
         bbox = d.textbbox((0, 0), text, font=text_font)
         tw, th = bbox[2] - bbox[0], bbox[3] - bbox[1]
 
-        shake_x = shake_y = 0
-        if SWEEP_IN_END < t < TEXT_HOLD_END:
-            local = (t - SWEEP_IN_END) / (TEXT_HOLD_END - SWEEP_IN_END)
-            decay = math.exp(-local * 6.0)
-            phase = local * (TEXT_HOLD_END - SWEEP_IN_END) * n_frames
-            shake_x = int(decay * 5 * math.sin(phase * 1.9))
-            shake_y = int(decay * 3 * math.cos(phase * 2.3))
+        # Spacing between repeating GOAL! tokens. Tight enough that there's
+        # always at least one visible at any moment, loose enough to read.
+        token_spacing = tw + 80  # gap between GOAL!s
+        n_tokens = (WIDTH // token_spacing) + 4  # extra so we always have a
+                                                  # token wrapping in/out
 
+        # Reserve the logo area so text doesn't run over it.
+        # Ticker scrolls TOWARD the logo: logo is on the left for AWAY
+        # team, so ticker flows leftward; logo is on the right for HOME
+        # team, so ticker flows rightward.
         if logo is not None and direction == "ltr":
-            text_center_x = WIDTH - (WIDTH - logo.width) // 2 + 20
+            ticker_x_start = int(WIDTH * 0.10) + logo.width + 30
+            ticker_x_end = WIDTH
+            scroll_dir = -1  # tokens move RTL (toward left-side logo)
         elif logo is not None and direction == "rtl":
-            text_center_x = (WIDTH - logo.width) // 2 - 20
+            ticker_x_start = 0
+            ticker_x_end = WIDTH - int(WIDTH * 0.10) - logo.width - 30
+            scroll_dir = 1   # tokens move LTR (toward right-side logo)
         else:
-            text_center_x = WIDTH // 2
+            ticker_x_start = 0
+            ticker_x_end = WIDTH
+            scroll_dir = -1 if direction == "ltr" else 1
 
-        x = text_center_x - tw // 2 - bbox[0] + shake_x
-        y = (HEIGHT - th) // 2 - bbox[1] + shake_y
+        ticker_w = max(1, ticker_x_end - ticker_x_start)
+
+        # Position is driven by elapsed seconds since animation started.
+        elapsed_hold = t * (n_frames / FPS)
+        offset = (elapsed_hold * TICKER_SPEED_PX_PER_SEC) % token_spacing
+
         a = int(255 * text_alpha)
 
-        for dx, dy, sa in [(3, 3, 180), (2, 2, 200)]:
-            d.text((x + dx, y + dy), text, font=text_font,
-                   fill=(0, 0, 0, int(sa * text_alpha)))
-        for ox, oy in [(-2, 0), (2, 0), (0, -2), (0, 2),
-                       (-2, -2), (2, -2), (-2, 2), (2, 2)]:
-            d.text((x + ox, y + oy), text, font=text_font,
-                   fill=(*color_outline, a))
-        d.text((x, y), text, font=text_font, fill=(255, 255, 255, a))
+        # Draw each token in the visible window. We render to a wide temp
+        # layer then mask it down to the ticker region, so tokens that exit
+        # one side cleanly fade off the edge instead of wrapping mid-text.
+        ticker_layer = Image.new("RGBA", (ticker_w, HEIGHT), (0, 0, 0, 0))
+        td = ImageDraw.Draw(ticker_layer)
+        y = (HEIGHT - th) // 2 - bbox[1]
 
+        for i in range(-2, n_tokens):
+            if scroll_dir > 0:
+                # LTR: tokens slide from left to right; offset moves them right
+                base_x = i * token_spacing - offset
+            else:
+                # RTL: tokens slide from right to left
+                base_x = ticker_w - tw - (i * token_spacing - offset)
+
+            x = int(base_x)
+            # Skip tokens entirely off-screen
+            if x + tw < -20 or x > ticker_w + 20:
+                continue
+
+            # Drop shadow
+            for dx, dy, sa in [(3, 3, 180), (2, 2, 200)]:
+                td.text((x + dx, y + dy), text, font=text_font,
+                        fill=(0, 0, 0, int(sa * text_alpha)))
+            # Outline
+            for ox, oy in [(-2, 0), (2, 0), (0, -2), (0, 2),
+                           (-2, -2), (2, -2), (-2, 2), (2, 2)]:
+                td.text((x + ox, y + oy), text, font=text_font,
+                        fill=(*color_outline, a))
+            # Fill
+            td.text((x, y), text, font=text_font, fill=(255, 255, 255, a))
+
+        text_layer.alpha_composite(ticker_layer, (ticker_x_start, 0))
         canvas.alpha_composite(text_layer)
 
     return canvas  # RGBA
@@ -379,7 +428,10 @@ def make_gif(team: str, side: str, out_dir: Path) -> Path:
     duration_ms = int(1000 / FPS)
     rgb_frames[0].save(
         out_path, save_all=True, append_images=rgb_frames[1:],
-        duration=duration_ms, loop=0, optimize=True,
+        duration=duration_ms, optimize=True,
+        # No loop=0 — we want the GIF to play once and stop. The live engine
+        # plays it through its own elapsed-time gate (also one-shot), so this
+        # only affects standalone GIF previews in browsers / file viewers.
     )
     return out_path
 

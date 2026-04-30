@@ -406,7 +406,7 @@ def render(project: Project, state: GameState,
     #   PRE-PULSE (0.0 .. 1.5s): border pulses at 2Hz in scoring color
     #   SWEEP    (1.5 .. 1.5+gif_native): border holds bright in scoring color
     #   TAIL     (last 0.5s):    border fades from scoring color back to default
-    GOAL_PRE_PULSE_SEC = 1.5
+    GOAL_PRE_PULSE_SEC = 2.0
     GOAL_TAIL_SEC = 0.5
     border_top_left = away_banner_border
     border_top_right = home_banner_border
@@ -440,15 +440,19 @@ def render(project: Project, state: GameState,
                         int(a[2] + (b[2]-a[2])*t))
 
             if elapsed < GOAL_PRE_PULSE_SEC:
-                # Pulse: 2Hz sin wave between dim (default-ish) and full scoring
+                # Pulse: 2Hz sin wave between dim default and bright WHITE.
+                # White was chosen over the scoring team's color so the pulse
+                # really pops and reads as "something just happened" rather
+                # than blending in with the upcoming sweep color.
+                # Frequency = 2 Hz (so 6 cycles over the 3s pre-pulse).
                 import math as _math
-                phase = (elapsed / GOAL_PRE_PULSE_SEC) * (2 * _math.pi * 3)
+                phase = elapsed * (2 * _math.pi * 2)  # 2 Hz
                 pulse = 0.5 + 0.5 * _math.sin(phase - _math.pi / 2)  # 0..1
-                # baseline mix: 30% scoring color even at trough so it never
-                # snaps fully dark
+                # baseline mix: 30% white even at trough so it never
+                # snaps fully back to the default border color
                 t = 0.30 + 0.70 * pulse
                 base_default = away_banner_border  # neutral starting point
-                col = _blend(base_default, scoring_rgb, t)
+                col = _blend(base_default, (255, 255, 255), t)
                 border_top_left = border_top_right = col
                 border_bot_left = border_bot_right = col
                 border_left = border_right = col
@@ -516,19 +520,20 @@ def render(project: Project, state: GameState,
                 inner_y1_b = by1 - border_w
                 target_w = max(1, inner_x1 - inner_x0)
                 target_h = max(1, inner_y1_b - inner_y0_b)
+
+                # NEAREST resampling for both the content AND the mask.
+                # LANCZOS would interpolate between the red/blue sweep pixels
+                # and the magenta KEY_COLOR pixels at the sweep's trailing
+                # edge, producing pink bleed even with a perfect mask. The
+                # source GIF has no pink — only NEAREST preserves that.
                 resized = frame.resize((target_w, target_h),
-                                       _Img.Resampling.LANCZOS)
-                # Chroma-key: drop pixels that are clearly magenta-dominant
-                # (high red + high blue + low green). This catches pure
-                # KEY_COLOR (255,0,255) and any blended-edge pixels that are
-                # still mostly magenta. Real team colors never satisfy all
-                # three conditions: nothing in the NHL palette has high red
-                # AND high blue AND low green simultaneously.
+                                       _Img.Resampling.NEAREST)
                 import numpy as _np
                 arr = _np.array(resized).astype(_np.int16)
-                is_key = ((arr[..., 0] > 180) &
-                          (arr[..., 2] > 180) &
-                          (arr[..., 1] < 80))
+                # Magenta-ness metric: huge for magenta (~510), low for any
+                # NHL primary or secondary team color.
+                magenta = arr[..., 0] + arr[..., 2] - 2 * arr[..., 1]
+                is_key = magenta > 300
                 mask_arr = (~is_key).astype(_np.uint8) * 255
                 mask = _Img.fromarray(mask_arr, mode="L")
                 img.paste(resized, (inner_x0, inner_y0_b), mask)
