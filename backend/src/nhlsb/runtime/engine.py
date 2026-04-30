@@ -298,17 +298,17 @@ class Engine:
         anim = self.goal_animation_active()
         if anim is not None:
             from PIL import Image as _Img
+            import math as _math
+            import numpy as _np
+
+            # Build cache once per animation
             if self._scoreboard_static_cache is None or self._scoreboard_static_band is None:
-                # First frame of this animation - render full scoreboard with
-                # NO goal-anim overlay, capture the banner band coords.
                 base = renderer.render(
                     self.project, self.state,
                     assets_root=self.assets_root,
                     goal_animation=None,
                 )
                 self._scoreboard_static_cache = base.copy()
-                # Renderer attaches `.banner_band` = (x0, y0, x1, y1).
-                # Fall back to a simple band if (older renderer) it's missing.
                 self._scoreboard_static_band = getattr(
                     base, "banner_band",
                     (0, int(self.project.layout.score_h * self.project.layout.height),
@@ -316,22 +316,59 @@ class Engine:
                      int((self.project.layout.score_h + 0.13) * self.project.layout.height))
                 )
 
-            # Get the GIF frame for this elapsed time
-            gif_frame = self.get_goal_anim_frame(anim["elapsed"])
-            if gif_frame is None:
-                img = renderer.render(self.project, self.state,
-                                      assets_root=self.assets_root,
-                                      goal_animation=anim)
-            else:
-                # Paste GIF frame over the banner row of the cached scoreboard.
-                img = self._scoreboard_static_cache.copy()
-                bx0, by0, bx1, by1 = self._scoreboard_static_band
-                target_w = max(1, bx1 - bx0)
-                target_h = max(1, by1 - by0)
-                if gif_frame.size != (target_w, target_h):
-                    gif_frame = gif_frame.resize((target_w, target_h),
-                                                 _Img.Resampling.BILINEAR)
-                img.paste(gif_frame, (bx0, by0))
+            img = self._scoreboard_static_cache.copy()
+            bx0, by0, bx1, by1 = self._scoreboard_static_band
+
+            # ----- Phase logic (mirrors renderer.py) -----
+            GOAL_PRE_PULSE_SEC = 2.0
+            GOAL_TAIL_SEC = 0.5
+            elapsed = float(anim.get("elapsed", 0))
+            duration = float(anim.get("duration", 0))
+            sweep_end = max(GOAL_PRE_PULSE_SEC + 0.01, duration - GOAL_TAIL_SEC)
+            in_pulse = elapsed < GOAL_PRE_PULSE_SEC
+            in_sweep = (not in_pulse) and elapsed < sweep_end
+            in_tail = elapsed >= sweep_end
+
+            # ----- Border overlay -----
+            # During pulse: paint a pulsing white border over the banner row
+            # to draw the eye. During sweep/tail the banner gets covered by
+            # the GIF (during sweep) or returns to default (tail) — for tail
+            # we just leave the cached default border alone so it looks like
+            # a clean fade back, no drawing needed.
+            if in_pulse:
+                phase = elapsed * (2 * _math.pi * 2)  # 2 Hz
+                pulse = 0.5 + 0.5 * _math.sin(phase - _math.pi / 2)
+                t = 0.30 + 0.70 * pulse
+                w = max(255 - int(255 * (1 - t)), 0)  # white intensity
+                pulse_col = (w, w, w)
+                # Draw 4 thin lines around banner row directly via numpy
+                arr = _np.array(img)
+                bw = 2
+                arr[by0:by0+bw, bx0:bx1] = pulse_col
+                arr[by1-bw:by1, bx0:bx1] = pulse_col
+                arr[by0:by1, bx0:bx0+bw] = pulse_col
+                arr[by0:by1, bx1-bw:bx1] = pulse_col
+                img = _Img.fromarray(arr)
+
+            # ----- GIF compositing (sweep phase only) -----
+            if in_sweep:
+                gif_play_elapsed = elapsed - GOAL_PRE_PULSE_SEC
+                gif_frame = self.get_goal_anim_frame(elapsed)
+                if gif_frame is not None:
+                    target_w = max(1, bx1 - bx0)
+                    target_h = max(1, by1 - by0)
+                    if gif_frame.size != (target_w, target_h):
+                        gif_frame = gif_frame.resize((target_w, target_h),
+                                                     _Img.Resampling.NEAREST)
+                    # Chroma-key: drop magenta-dominant pixels (palette-quantized
+                    # pinks too) — same logic as renderer.py uses.
+                    arr = _np.array(gif_frame).astype(_np.int16)
+                    r, g, b = arr[..., 0], arr[..., 1], arr[..., 2]
+                    rb_min = _np.minimum(r, b)
+                    is_key = (rb_min > 100) & ((rb_min - g) > 60)
+                    mask_arr = (~is_key).astype(_np.uint8) * 255
+                    mask = _Img.fromarray(mask_arr, mode="L")
+                    img.paste(gif_frame, (bx0, by0), mask)
         else:
             img = renderer.render(
                 self.project, self.state,
