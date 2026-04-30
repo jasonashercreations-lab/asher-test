@@ -524,16 +524,26 @@ def render(project: Project, state: GameState,
                 # NEAREST resampling for both the content AND the mask.
                 # LANCZOS would interpolate between the red/blue sweep pixels
                 # and the magenta KEY_COLOR pixels at the sweep's trailing
-                # edge, producing pink bleed even with a perfect mask. The
-                # source GIF has no pink — only NEAREST preserves that.
+                # edge, producing pink bleed even with a perfect mask.
                 resized = frame.resize((target_w, target_h),
                                        _Img.Resampling.NEAREST)
                 import numpy as _np
                 arr = _np.array(resized).astype(_np.int16)
-                # Magenta-ness metric: huge for magenta (~510), low for any
-                # NHL primary or secondary team color.
-                magenta = arr[..., 0] + arr[..., 2] - 2 * arr[..., 1]
-                is_key = magenta > 300
+                # Chroma-key detection — broader test that catches not only
+                # pure magenta (255, 0, 255) but ANY pixel where red AND blue
+                # both dominate green. This catches palette-quantized pinkish
+                # edge pixels that the strict magenta test misses, without
+                # touching real team colors:
+                #   - pure magenta (255,0,255): keyed
+                #   - pinkish edge (200,100,200): keyed
+                #   - white (255,255,255): not keyed (g matches r,b)
+                #   - team red (175,30,45): not keyed (b is low)
+                #   - team navy (0,40,104): not keyed (r is low)
+                r, g, b = arr[..., 0], arr[..., 1], arr[..., 2]
+                rb_min = _np.minimum(r, b)
+                # Pixel is "keyable" if both red AND blue are clearly higher
+                # than green, AND both are bright (not dark colors).
+                is_key = (rb_min > 100) & ((rb_min - g) > 60)
                 mask_arr = (~is_key).astype(_np.uint8) * 255
                 mask = _Img.fromarray(mask_arr, mode="L")
                 img.paste(resized, (inner_x0, inner_y0_b), mask)
