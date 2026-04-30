@@ -102,34 +102,44 @@ def load_team_logo(assets_root: Path, abbrev: str) -> Image.Image | None:
 
 def load_team_banner(assets_root: Path, abbrev: str,
                      side: str | None = None) -> Image.Image | None:
-    """Look for a bundled per-team banner at assets/banners/teams/<ABBREV>.png.
+    """Look for a bundled per-team banner.
+
+    Format priority: WebP (smaller, modern) → PNG (legacy fallback). Lets the
+    project migrate banners one at a time.
 
     Filename convention (intuitive mapping — suffix matches the team's role):
 
-        <ABBR>_AWAY.png   shown on the LEFT (away-team) side of the scoreboard
-        <ABBR>_HOME.png   shown on the RIGHT (home-team) side of the scoreboard
+        <ABBR>_AWAY.{webp|png}   shown on the LEFT (away-team) side of the scoreboard
+        <ABBR>_HOME.{webp|png}   shown on the RIGHT (home-team) side of the scoreboard
 
     So when NYR is the away team in a matchup (rendered on the left), the
-    renderer loads NYR_AWAY.png. When BUF is the home team (rendered on the
-    right), it loads BUF_HOME.png.
+    renderer loads NYR_AWAY.webp (or .png if no .webp exists). When BUF is
+    the home team (rendered on the right), it loads BUF_HOME.webp.
 
-    Falls back to <ABBR>.png if no side-specific file exists, so legacy
-    single-banner setups keep working.
+    Falls back to <ABBR>.{webp|png} if no side-specific file exists, so
+    legacy single-banner setups keep working.
     """
     if not assets_root or not abbrev:
         return None
     base = assets_root / "banners" / "teams"
     abbr_up = abbrev.upper()
-    # Map side -> suffix (literal: away role uses _AWAY file, home uses _HOME)
     suffix_for_side = {"away": "AWAY", "home": "HOME"}
     suffix = suffix_for_side.get(side)
+
+    def _try_load(stem: str) -> Image.Image | None:
+        """Try .webp first, then .png. Returns the first one that loads."""
+        for ext in ("webp", "png"):
+            img = load_sprite_asset(base / f"{stem}.{ext}")
+            if img is not None:
+                return img
+        return None
+
     if suffix:
-        side_candidate = base / f"{abbr_up}_{suffix}.png"
-        img = load_sprite_asset(side_candidate)
+        img = _try_load(f"{abbr_up}_{suffix}")
         if img is not None:
             return img
-    # Fallback: generic banner
-    return load_sprite_asset(base / f"{abbr_up}.png")
+    # Fallback: generic banner (no _AWAY/_HOME suffix)
+    return _try_load(abbr_up)
 
 
 def pad_to_canvas(sprite: Image.Image,

@@ -396,18 +396,18 @@ def render_frame(team: str, side: str, frame_idx: int, n_frames: int,
     return canvas  # RGBA
 
 
-# ---- GIF writer ----
-def _flatten_to_key(rgba: Image.Image) -> Image.Image:
-    """Hard-threshold alpha and composite onto KEY_COLOR. Result is RGB with
-    every pixel either real content (alpha was >= 128) or exact KEY_COLOR
-    (alpha was < 128). No in-between values, so chroma keying is reliable."""
-    alpha = rgba.split()[3].point(lambda v: 255 if v >= 128 else 0)
-    rgb = rgba.convert("RGB")
-    bg = Image.new("RGB", rgba.size, KEY_COLOR)
-    return Image.composite(rgb, bg, alpha)
+# ---- WebP writer ----
+def make_gif(team: str, side: str, out_dir: Path,
+             format: str = "webp") -> Path:
+    """Generate the goal animation for one team/side.
 
+    Default output format is WebP (smaller file, real alpha channel — no
+    chroma-key needed in the live engine). Pass format="gif" to produce
+    a legacy GIF (RGB with magenta chroma-key) for older asset packs.
 
-def make_gif(team: str, side: str, out_dir: Path) -> Path:
+    The function is still named `make_gif` for backwards compat with any
+    code that calls it. It now emits whatever format is requested.
+    """
     bg = build_banner_strip(team, side)
     base_logo = load_logo(team, int(HEIGHT * 0.78))
     sweep_bg = load_sweep_background(team)
@@ -415,25 +415,47 @@ def make_gif(team: str, side: str, out_dir: Path) -> Path:
                                 background=bg, base_logo=base_logo,
                                 sweep_bg=sweep_bg)
                    for i in range(N_FRAMES)]
-    # Final hold on a fully transparent (= fully keyed) frame so the live
-    # banners are clean and unobstructed at the end of the loop.
+    # Final hold on a fully transparent frame so the live banners are clean
+    # and unobstructed at the end of the loop.
     blank = Image.new("RGBA", (WIDTH, HEIGHT), (0, 0, 0, 0))
     for _ in range(int(FPS * 0.5)):
         rgba_frames.append(blank)
 
-    # Flatten to RGB with hard chroma-key edges
-    rgb_frames = [_flatten_to_key(f) for f in rgba_frames]
-
-    out_path = out_dir / f"{team}_{side.upper()}.gif"
     duration_ms = int(1000 / FPS)
+    fmt = format.lower()
+
+    if fmt == "webp":
+        # WebP supports RGBA natively — keep alpha, no chroma-key flatten.
+        # method=6 is highest-quality compression (slower encode, smaller file).
+        out_path = out_dir / f"{team}_{side.upper()}.webp"
+        rgba_frames[0].save(
+            out_path, save_all=True, append_images=rgba_frames[1:],
+            duration=duration_ms, format="WebP",
+            lossless=True, quality=100, method=6,
+            # No loop=0 — engine drives playback timing, this is just a hint
+            # for standalone preview viewers.
+        )
+        return out_path
+
+    # GIF fallback: hard-threshold alpha to magenta, then save as 8-bit GIF.
+    rgb_frames = [_flatten_to_key(f) for f in rgba_frames]
+    out_path = out_dir / f"{team}_{side.upper()}.gif"
     rgb_frames[0].save(
         out_path, save_all=True, append_images=rgb_frames[1:],
         duration=duration_ms, optimize=True,
-        # No loop=0 — we want the GIF to play once and stop. The live engine
-        # plays it through its own elapsed-time gate (also one-shot), so this
-        # only affects standalone GIF previews in browsers / file viewers.
     )
     return out_path
+
+
+def _flatten_to_key(rgba: Image.Image) -> Image.Image:
+    """Hard-threshold alpha and composite onto KEY_COLOR. Result is RGB with
+    every pixel either real content (alpha was >= 128) or exact KEY_COLOR
+    (alpha was < 128). No in-between values, so chroma keying is reliable.
+    Only used when generating legacy GIF output."""
+    alpha = rgba.split()[3].point(lambda v: 255 if v >= 128 else 0)
+    rgb = rgba.convert("RGB")
+    bg = Image.new("RGB", rgba.size, KEY_COLOR)
+    return Image.composite(rgb, bg, alpha)
 
 
 # ---- 32-team list (drives --all) ----
@@ -476,9 +498,12 @@ def main():
     parser.add_argument("side", nargs="?", choices=["away", "home"],
                         help="Optional: only generate this side")
     parser.add_argument("--all", action="store_true",
-                        help="Generate all 32 teams x both sides (64 GIFs)")
+                        help="Generate all 32 teams x both sides (64 animations)")
     parser.add_argument("--out", type=Path, default=ANIM_DIR,
                         help="Output directory (default: assets/animations/goal_banner/)")
+    parser.add_argument("--format", choices=["webp", "gif"], default="webp",
+                        help="Output format. WebP (default) is smaller and has "
+                             "real alpha. GIF is larger and uses chroma-key.")
     args = parser.parse_args()
 
     args.out.mkdir(parents=True, exist_ok=True)
@@ -498,7 +523,7 @@ def main():
 
     for i, (team, side) in enumerate(targets, 1):
         try:
-            out = make_gif(team, side, args.out)
+            out = make_gif(team, side, args.out, format=args.format)
             sz = out.stat().st_size
             print(f"  [{i:2}/{len(targets)}] {out.name}  ({sz // 1024} KB)")
         except Exception as e:

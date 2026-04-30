@@ -148,26 +148,40 @@ class Engine:
 
     # ---- goal-animation control ----
     def _load_goal_animation(self, team: str, side: str):
-        """Decode the GIF once and cache (frames as RGB, frame_durations_ms,
-        total_ms). Subsequent triggers reuse the cache."""
+        """Decode the animation once and cache (frames as RGBA, durations_ms,
+        total_ms). Subsequent triggers reuse the cache.
+
+        WebP is preferred (smaller, true alpha, no chroma-key needed). Falls
+        back to GIF for backwards compatibility with older asset packs."""
         key = (team.upper(), side.lower())
         if key in self._goal_anim_cache:
             return self._goal_anim_cache[key]
-        gif_path = (self.assets_root / "animations" / "goal_banner"
-                    / f"{key[0]}_{key[1].upper()}.gif")
-        if not gif_path.exists():
+        anim_dir = self.assets_root / "animations" / "goal_banner"
+        # Prefer WebP, fall back to GIF
+        anim_path = anim_dir / f"{key[0]}_{key[1].upper()}.webp"
+        if not anim_path.exists():
+            anim_path = anim_dir / f"{key[0]}_{key[1].upper()}.gif"
+        if not anim_path.exists():
             return None
         from PIL import Image as _Img
-        gif = _Img.open(gif_path)
-        n = getattr(gif, "n_frames", 1)
+        src = _Img.open(anim_path)
+        n = getattr(src, "n_frames", 1)
+        # Detect format so we know whether to expect alpha or apply chroma key
+        is_webp = anim_path.suffix.lower() == ".webp"
         frames = []
         durations = []
         for i in range(n):
-            gif.seek(i)
-            frames.append(gif.convert("RGB").copy())
-            durations.append(gif.info.get("duration", 33))
+            src.seek(i)
+            # WebP: convert to RGBA so the alpha channel is preserved. The
+            # renderer uses it directly as a mask. GIF: keep RGB; renderer
+            # applies the chroma-key fallback to handle transparency.
+            mode = "RGBA" if is_webp else "RGB"
+            frames.append(src.convert(mode).copy())
+            durations.append(src.info.get("duration", 33))
         total = sum(durations) or 1
-        entry = (frames, durations, total)
+        # Cache also remembers whether this is a WebP (alpha-aware) animation
+        # so the renderer knows which path to take.
+        entry = (frames, durations, total, is_webp)
         self._goal_anim_cache[key] = entry
         return entry
 
@@ -256,7 +270,7 @@ class Engine:
         cache = self._load_goal_animation(team, side)
         if cache is None:
             return None
-        frames, durations, total = cache
+        frames, durations, total, _is_webp = cache
         # Pre-pulse phase: GIF hasn't started, return first frame
         GOAL_PRE_PULSE_SEC = 2.0
         gif_play_sec = elapsed_sec - GOAL_PRE_PULSE_SEC
@@ -350,7 +364,7 @@ class Engine:
                 arr[by0:by1, bx1-bw:bx1] = pulse_col
                 img = _Img.fromarray(arr)
 
-            # ----- GIF compositing (sweep phase only) -----
+            # ----- Animation compositing (sweep phase only) -----
             if in_sweep:
                 gif_play_elapsed = elapsed - GOAL_PRE_PULSE_SEC
                 gif_frame = self.get_goal_anim_frame(elapsed)
@@ -360,15 +374,20 @@ class Engine:
                     if gif_frame.size != (target_w, target_h):
                         gif_frame = gif_frame.resize((target_w, target_h),
                                                      _Img.Resampling.NEAREST)
-                    # Chroma-key: drop magenta-dominant pixels (palette-quantized
-                    # pinks too) — same logic as renderer.py uses.
-                    arr = _np.array(gif_frame).astype(_np.int16)
-                    r, g, b = arr[..., 0], arr[..., 1], arr[..., 2]
-                    rb_min = _np.minimum(r, b)
-                    is_key = (rb_min > 100) & ((rb_min - g) > 60)
-                    mask_arr = (~is_key).astype(_np.uint8) * 255
-                    mask = _Img.fromarray(mask_arr, mode="L")
-                    img.paste(gif_frame, (bx0, by0), mask)
+                    if gif_frame.mode == "RGBA":
+                        # WebP path: frame already has a real alpha channel.
+                        # Use it directly as the mask — no chroma-key needed.
+                        img.paste(gif_frame, (bx0, by0), gif_frame)
+                    else:
+                        # GIF fallback: chroma-key magenta-dominant pixels
+                        # (covers both pure magenta AND palette-quantized pink edges).
+                        arr = _np.array(gif_frame).astype(_np.int16)
+                        r, g, b = arr[..., 0], arr[..., 1], arr[..., 2]
+                        rb_min = _np.minimum(r, b)
+                        is_key = (rb_min > 100) & ((rb_min - g) > 60)
+                        mask_arr = (~is_key).astype(_np.uint8) * 255
+                        mask = _Img.fromarray(mask_arr, mode="L")
+                        img.paste(gif_frame, (bx0, by0), mask)
         else:
             img = renderer.render(
                 self.project, self.state,

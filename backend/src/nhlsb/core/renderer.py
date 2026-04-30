@@ -491,16 +491,21 @@ def render(project: Project, state: GameState,
         try:
             anim_team = goal_animation.get("team", "").upper()
             anim_side = goal_animation.get("side", "").lower()
-            gif_path = (assets_root / "animations" / "goal_banner"
-                        / f"{anim_team}_{anim_side.upper()}.gif")
-            if gif_path.exists():
+            anim_dir = assets_root / "animations" / "goal_banner"
+            # Prefer WebP (smaller, real alpha, no chroma-key needed). Fall
+            # back to GIF for backwards compatibility with old asset packs.
+            anim_path = anim_dir / f"{anim_team}_{anim_side.upper()}.webp"
+            if not anim_path.exists():
+                anim_path = anim_dir / f"{anim_team}_{anim_side.upper()}.gif"
+            if anim_path.exists():
                 from PIL import Image as _Img
-                gif = _Img.open(gif_path)
-                n_frames = getattr(gif, "n_frames", 1)
+                src = _Img.open(anim_path)
+                is_webp = anim_path.suffix.lower() == ".webp"
+                n_frames = getattr(src, "n_frames", 1)
                 frame_durations_ms = []
                 for fi in range(n_frames):
-                    gif.seek(fi)
-                    frame_durations_ms.append(gif.info.get("duration", 33))
+                    src.seek(fi)
+                    frame_durations_ms.append(src.info.get("duration", 33))
                 total_ms = sum(frame_durations_ms) or 1
                 # Clamp to last frame instead of looping (we drive timing
                 # ourselves and don't want it to restart mid-display)
@@ -512,8 +517,9 @@ def render(project: Project, state: GameState,
                     if t_ms < acc:
                         target_idx = fi
                         break
-                gif.seek(target_idx)
-                frame = gif.convert("RGB")
+                src.seek(target_idx)
+                # WebP: keep RGBA so we get real alpha. GIF: RGB + chroma-key.
+                frame = src.convert("RGBA" if is_webp else "RGB")
                 inner_x0 = bx0 + border_w
                 inner_x1 = bx1 - border_w
                 inner_y0_b = by0 + border_w
@@ -521,32 +527,34 @@ def render(project: Project, state: GameState,
                 target_w = max(1, inner_x1 - inner_x0)
                 target_h = max(1, inner_y1_b - inner_y0_b)
 
-                # NEAREST resampling for both the content AND the mask.
-                # LANCZOS would interpolate between the red/blue sweep pixels
-                # and the magenta KEY_COLOR pixels at the sweep's trailing
-                # edge, producing pink bleed even with a perfect mask.
+                # NEAREST resampling preserves color/alpha boundaries cleanly.
+                # For GIFs especially, LANCZOS would interpolate between the
+                # sweep pixels and the magenta KEY_COLOR pixels and produce
+                # pink bleed at the trailing edge.
                 resized = frame.resize((target_w, target_h),
                                        _Img.Resampling.NEAREST)
-                import numpy as _np
-                arr = _np.array(resized).astype(_np.int16)
-                # Chroma-key detection — broader test that catches not only
-                # pure magenta (255, 0, 255) but ANY pixel where red AND blue
-                # both dominate green. This catches palette-quantized pinkish
-                # edge pixels that the strict magenta test misses, without
-                # touching real team colors:
-                #   - pure magenta (255,0,255): keyed
-                #   - pinkish edge (200,100,200): keyed
-                #   - white (255,255,255): not keyed (g matches r,b)
-                #   - team red (175,30,45): not keyed (b is low)
-                #   - team navy (0,40,104): not keyed (r is low)
-                r, g, b = arr[..., 0], arr[..., 1], arr[..., 2]
-                rb_min = _np.minimum(r, b)
-                # Pixel is "keyable" if both red AND blue are clearly higher
-                # than green, AND both are bright (not dark colors).
-                is_key = (rb_min > 100) & ((rb_min - g) > 60)
-                mask_arr = (~is_key).astype(_np.uint8) * 255
-                mask = _Img.fromarray(mask_arr, mode="L")
-                img.paste(resized, (inner_x0, inner_y0_b), mask)
+
+                if is_webp:
+                    # WebP: composite using the frame's own alpha channel.
+                    # No chroma-key needed — the alpha was authored cleanly.
+                    img.paste(resized, (inner_x0, inner_y0_b), resized)
+                else:
+                    # GIF fallback: chroma-key magenta-dominant pixels.
+                    # Detection is broad enough to catch palette-quantized
+                    # pinkish edges, narrow enough to leave real team colors:
+                    #   - pure magenta (255,0,255): keyed
+                    #   - pinkish edge (200,100,200): keyed
+                    #   - white (255,255,255): not keyed (g matches r,b)
+                    #   - team red (175,30,45): not keyed (b is low)
+                    #   - team navy (0,40,104): not keyed (r is low)
+                    import numpy as _np
+                    arr = _np.array(resized).astype(_np.int16)
+                    r, g, b = arr[..., 0], arr[..., 1], arr[..., 2]
+                    rb_min = _np.minimum(r, b)
+                    is_key = (rb_min > 100) & ((rb_min - g) > 60)
+                    mask_arr = (~is_key).astype(_np.uint8) * 255
+                    mask = _Img.fromarray(mask_arr, mode="L")
+                    img.paste(resized, (inner_x0, inner_y0_b), mask)
         except Exception:
             # Animation overlay must never break a render
             pass
