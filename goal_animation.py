@@ -54,6 +54,7 @@ N_FRAMES = int(FPS * DURATION_SEC)
 FONT_PATH = REPO / "assets" / "fonts" / "Anton-Regular.ttf"
 BANNER_DIR = REPO / "assets" / "banners" / "teams"
 LOGO_DIR = REPO / "assets" / "logos" / "teams"
+SWEEP_BG_DIR = REPO / "assets" / "animations" / "sweep_backgrounds"
 
 ANIM_DIR = REPO / "assets" / "animations" / "goal_banner"
 ANIM_DIR.mkdir(parents=True, exist_ok=True)
@@ -67,6 +68,13 @@ SWEEP_SLOPE = 110
 
 # How much the leading edge brightens (0-255 added to base color, clipped)
 EDGE_HIGHLIGHT = 70
+
+
+# Chroma key — every pixel in the GIF is either real content (sweep, logo,
+# text) or this exact color, with no in-between values. The renderer detects
+# this exact color and lets the live banner row show through. Bright magenta
+# is used because no NHL team has it as a primary or secondary color.
+KEY_COLOR = (255, 0, 255)
 
 
 # ---- Easings ----
@@ -132,32 +140,13 @@ def edge_highlight_mask(w: int, h: int, progress: float, slope_px: int = SWEEP_S
 
 # ---- Banner strip background ----
 def build_banner_strip(team: str, side: str) -> Image.Image:
-    """Compose a banner row for the GIF preview. The team's banner is on
-    its scoreboard side (left for away, right for home); the OTHER side
-    is filled with neutral dark so focus stays on the scoring team.
-
-    Live runtime composites the GIF over the actual banner row, so the
-    neutral fill only matters for the standalone GIF preview.
+    """Return a fully chroma-keyed background. The renderer will mask out
+    these pixels and let whatever's actually in the live banner row show
+    through. That way both teams' banners stay visible during the whole
+    animation; the GIF only contributes the colored sweep, the logo, and
+    the GOAL! text on top of the live banners.
     """
-    bg = Image.new("RGB", (WIDTH, HEIGHT), (10, 10, 12))
-    half = WIDTH // 2
-
-    banner_filename = f"{team}_{'HOME' if side == 'home' else 'AWAY'}.png"
-    banner_path = BANNER_DIR / banner_filename
-    if not banner_path.exists():
-        banner_path = BANNER_DIR / f"{team}_HOME.png"
-    if banner_path.exists():
-        banner = Image.open(banner_path).convert("RGB")
-        scaled = banner.resize((half, HEIGHT), Image.Resampling.LANCZOS)
-        if side == "away":
-            bg.paste(scaled, (0, 0))
-            ImageDraw.Draw(bg).rectangle([half, 0, WIDTH, HEIGHT],
-                                         fill=(18, 18, 20))
-        else:
-            bg.paste(scaled, (half, 0))
-            ImageDraw.Draw(bg).rectangle([0, 0, half, HEIGHT],
-                                         fill=(18, 18, 20))
-    return bg
+    return Image.new("RGB", (WIDTH, HEIGHT), KEY_COLOR)
 
 
 def load_logo(team: str, target_h: int) -> Image.Image | None:
@@ -170,6 +159,35 @@ def load_logo(team: str, target_h: int) -> Image.Image | None:
     return logo.resize((new_w, target_h), Image.Resampling.LANCZOS)
 
 
+def load_sweep_background(team: str) -> Image.Image | None:
+    """Look for assets/animations/sweep_backgrounds/<TEAM>.png. If found,
+    return it scaled+cropped to (WIDTH, HEIGHT) as RGB. Used as the sweep
+    fill instead of the solid team primary color.
+
+    Returns None if no file exists; caller falls back to solid color.
+    """
+    path = SWEEP_BG_DIR / f"{team}.png"
+    if not path.exists():
+        return None
+    img = Image.open(path).convert("RGB")
+    # Cover-fit: scale so the image fills the banner, then center-crop
+    target_ratio = WIDTH / HEIGHT
+    src_ratio = img.width / img.height
+    if src_ratio > target_ratio:
+        # source is wider — scale by height, crop sides
+        new_h = HEIGHT
+        new_w = max(1, int(img.width * (HEIGHT / img.height)))
+    else:
+        # source is taller — scale by width, crop top/bottom
+        new_w = WIDTH
+        new_h = max(1, int(img.height * (WIDTH / img.width)))
+    img = img.resize((new_w, new_h), Image.Resampling.LANCZOS)
+    # center crop
+    left = (new_w - WIDTH) // 2
+    top = (new_h - HEIGHT) // 2
+    return img.crop((left, top, left + WIDTH, top + HEIGHT))
+
+
 def _scale_logo(logo: Image.Image, scale: float) -> Image.Image:
     if abs(scale - 1.0) < 0.005:
         return logo
@@ -180,8 +198,14 @@ def _scale_logo(logo: Image.Image, scale: float) -> Image.Image:
 
 # ---- Frame renderer ----
 def render_frame(team: str, side: str, frame_idx: int, n_frames: int,
-                 background: Image.Image, base_logo: Image.Image | None) -> Image.Image:
-    """Render one frame of the goal animation."""
+                 background: Image.Image, base_logo: Image.Image | None,
+                 sweep_bg: Image.Image | None = None) -> Image.Image:
+    """Render one frame as RGBA. Pixels OUTSIDE the sweep/logo/text are fully
+    transparent so the live banner row shows through underneath.
+
+    sweep_bg: optional RGB image at (WIDTH, HEIGHT). When provided, the sweep
+    reveals this image instead of a solid team-color fill.
+    """
     if side not in ("away", "home"):
         raise ValueError("side must be 'away' or 'home'")
 
@@ -190,7 +214,8 @@ def render_frame(team: str, side: str, frame_idx: int, n_frames: int,
     color_outline = (secondary.r, secondary.g, secondary.b)
     edge_color = tuple(min(255, c + EDGE_HIGHLIGHT) for c in color_main)
 
-    canvas = background.copy()
+    # Fully transparent canvas
+    canvas = Image.new("RGBA", (WIDTH, HEIGHT), (0, 0, 0, 0))
     direction = "ltr" if side == "away" else "rtl"
     t = frame_idx / max(1, n_frames - 1)
 
@@ -204,21 +229,28 @@ def render_frame(team: str, side: str, frame_idx: int, n_frames: int,
         edge_p, edge_strength = 1.0, 0.0
     else:
         p = ease_in_quint((t - TEXT_HOLD_END) / (1.0 - TEXT_HOLD_END))
-        # progress goes 1 -> 0; sweep retreats back to entry side (boomerang)
         mask = diagonal_mask(WIDTH, HEIGHT, 1.0 - p, direction=direction)
         edge_p, edge_strength = 1.0 - p, max(0.0, p)
 
-    color_layer = Image.new("RGB", (WIDTH, HEIGHT), color_main)
-    canvas.paste(color_layer, (0, 0), mask)
+    # Build sweep layer. If a per-team background image is supplied, the
+    # sweep reveals THAT instead of the solid color. Either way the diagonal
+    # mask becomes the layer's alpha.
+    if sweep_bg is not None:
+        sweep_rgba = sweep_bg.convert("RGBA")
+    else:
+        sweep_rgba = Image.new("RGBA", (WIDTH, HEIGHT), (*color_main, 0))
+    sweep_rgba.putalpha(mask)
+    canvas.alpha_composite(sweep_rgba)
 
     # Leading-edge shimmer (only during sweep phases, not the hold)
     if edge_strength > 0.05 and 0.0 < edge_p < 1.0:
         hi_mask = edge_highlight_mask(WIDTH, HEIGHT, edge_p, direction=direction)
         hi_mask = hi_mask.point(lambda v, s=edge_strength: int(v * s))
-        hi_layer = Image.new("RGB", (WIDTH, HEIGHT), edge_color)
-        canvas.paste(hi_layer, (0, 0), hi_mask)
+        hi_rgba = Image.new("RGBA", (WIDTH, HEIGHT), (*edge_color, 0))
+        hi_rgba.putalpha(hi_mask)
+        canvas.alpha_composite(hi_rgba)
 
-    # ---- Stage 2: ride-along logo with arrival bounce ----
+    # ---- Stage 2: ride-along logo ----
     logo = base_logo
     if logo is not None:
         logo_h = logo.height
@@ -239,7 +271,6 @@ def render_frame(team: str, side: str, frame_idx: int, n_frames: int,
             local = (t - SWEEP_IN_END) / (TEXT_HOLD_END - SWEEP_IN_END)
             if local < 0.25:
                 bp = local / 0.25
-                # subtle overshoot then settle (max ~8% larger)
                 scale = 1.0 + (ease_out_back(bp, overshoot=1.6) - 1.0) * 0.08
                 scale = max(0.95, min(1.12, scale))
             else:
@@ -256,29 +287,11 @@ def render_frame(team: str, side: str, frame_idx: int, n_frames: int,
             scaled = _scale_logo(logo, scale)
             sx = logo_x - (scaled.width - logo_w) // 2
             sy = (HEIGHT - scaled.height) // 2
-
             if logo_alpha < 255:
                 a = scaled.split()[3].point(lambda v, m=logo_alpha: int(v * m / 255))
                 scaled = scaled.copy()
                 scaled.putalpha(a)
-
-            canvas_rgba = canvas.convert("RGBA")
-
-            # Soft white halo behind logo so it pops against same-colored sweep
-            # (TBL on navy, NJD on red, DAL on green, etc.). Dilate the alpha
-            # by blurring it, paint white at low opacity, then layer logo over.
-            alpha_only = scaled.split()[3]
-            # Two-stage dilate via blur for a soft outer glow
-            halo_alpha = alpha_only.filter(ImageFilter.GaussianBlur(radius=8))
-            halo_alpha = halo_alpha.point(lambda v, m=logo_alpha: min(255, int(v * 1.5 * m / 255)))
-            halo = Image.new("RGBA", scaled.size, (255, 255, 255, 0))
-            halo.putalpha(halo_alpha)
-            # Paint with off-white so it reads as glow not overlay
-            white_layer = Image.new("RGBA", scaled.size, (255, 255, 255, 255))
-            white_layer.putalpha(halo_alpha.point(lambda v: int(v * 0.55)))
-            canvas_rgba.alpha_composite(white_layer, (sx, sy))
-            canvas_rgba.alpha_composite(scaled, (sx, sy))
-            canvas = canvas_rgba.convert("RGB")
+            canvas.alpha_composite(scaled, (sx, sy))
 
     # ---- Stage 3: GOAL! text ----
     if t <= SWEEP_IN_END:
@@ -301,7 +314,6 @@ def render_frame(team: str, side: str, frame_idx: int, n_frames: int,
         bbox = d.textbbox((0, 0), text, font=text_font)
         tw, th = bbox[2] - bbox[0], bbox[3] - bbox[1]
 
-        # Damped impulse shake on entry — decays exponentially, organic feel
         shake_x = shake_y = 0
         if SWEEP_IN_END < t < TEXT_HOLD_END:
             local = (t - SWEEP_IN_END) / (TEXT_HOLD_END - SWEEP_IN_END)
@@ -321,40 +333,52 @@ def render_frame(team: str, side: str, frame_idx: int, n_frames: int,
         y = (HEIGHT - th) // 2 - bbox[1] + shake_y
         a = int(255 * text_alpha)
 
-        # Drop shadow
         for dx, dy, sa in [(3, 3, 180), (2, 2, 200)]:
             d.text((x + dx, y + dy), text, font=text_font,
                    fill=(0, 0, 0, int(sa * text_alpha)))
-        # Outline (team secondary)
         for ox, oy in [(-2, 0), (2, 0), (0, -2), (0, 2),
                        (-2, -2), (2, -2), (-2, 2), (2, 2)]:
             d.text((x + ox, y + oy), text, font=text_font,
                    fill=(*color_outline, a))
-        # Fill (white)
         d.text((x, y), text, font=text_font, fill=(255, 255, 255, a))
 
-        canvas_rgba = canvas.convert("RGBA")
-        canvas_rgba.alpha_composite(text_layer)
-        canvas = canvas_rgba.convert("RGB")
+        canvas.alpha_composite(text_layer)
 
-    return canvas
+    return canvas  # RGBA
 
 
 # ---- GIF writer ----
+def _flatten_to_key(rgba: Image.Image) -> Image.Image:
+    """Hard-threshold alpha and composite onto KEY_COLOR. Result is RGB with
+    every pixel either real content (alpha was >= 128) or exact KEY_COLOR
+    (alpha was < 128). No in-between values, so chroma keying is reliable."""
+    alpha = rgba.split()[3].point(lambda v: 255 if v >= 128 else 0)
+    rgb = rgba.convert("RGB")
+    bg = Image.new("RGB", rgba.size, KEY_COLOR)
+    return Image.composite(rgb, bg, alpha)
+
+
 def make_gif(team: str, side: str, out_dir: Path) -> Path:
     bg = build_banner_strip(team, side)
     base_logo = load_logo(team, int(HEIGHT * 0.78))
-    frames = [render_frame(team, side, i, N_FRAMES,
-                           background=bg, base_logo=base_logo)
-              for i in range(N_FRAMES)]
-    # Final hold on resting state for half a second before looping
+    sweep_bg = load_sweep_background(team)
+    rgba_frames = [render_frame(team, side, i, N_FRAMES,
+                                background=bg, base_logo=base_logo,
+                                sweep_bg=sweep_bg)
+                   for i in range(N_FRAMES)]
+    # Final hold on a fully transparent (= fully keyed) frame so the live
+    # banners are clean and unobstructed at the end of the loop.
+    blank = Image.new("RGBA", (WIDTH, HEIGHT), (0, 0, 0, 0))
     for _ in range(int(FPS * 0.5)):
-        frames.append(bg)
+        rgba_frames.append(blank)
+
+    # Flatten to RGB with hard chroma-key edges
+    rgb_frames = [_flatten_to_key(f) for f in rgba_frames]
 
     out_path = out_dir / f"{team}_{side.upper()}.gif"
     duration_ms = int(1000 / FPS)
-    frames[0].save(
-        out_path, save_all=True, append_images=frames[1:],
+    rgb_frames[0].save(
+        out_path, save_all=True, append_images=rgb_frames[1:],
         duration=duration_ms, loop=0, optimize=True,
     )
     return out_path

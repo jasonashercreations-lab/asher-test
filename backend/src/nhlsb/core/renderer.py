@@ -399,35 +399,108 @@ def render(project: Project, state: GameState,
     # of the border (gives both teams identity even though banner is unbroken).
     # If frame colors are similar (auto-distinct picked them apart), this still
     # looks intentional.
-    _hline(img, bx0, x_mid, by0, away_banner_border, border_w)
-    _hline(img, x_mid, bx1, by0, home_banner_border, border_w)
-    _hline(img, bx0, x_mid, by1 - border_w, away_banner_border, border_w)
-    _hline(img, x_mid, bx1, by1 - border_w, home_banner_border, border_w)
-    _vline(img, bx0, by0, by1, away_banner_border, border_w)
-    _vline(img, bx1 - border_w, by0, by1, home_banner_border, border_w)
+    #
+    # When a goal animation is active, the banner border pulses/glows in the
+    # SCORING team's color across the full row (overrides the per-side colors).
+    # Three phases driven by elapsed time:
+    #   PRE-PULSE (0.0 .. 1.5s): border pulses at 2Hz in scoring color
+    #   SWEEP    (1.5 .. 1.5+gif_native): border holds bright in scoring color
+    #   TAIL     (last 0.5s):    border fades from scoring color back to default
+    GOAL_PRE_PULSE_SEC = 1.5
+    GOAL_TAIL_SEC = 0.5
+    border_top_left = away_banner_border
+    border_top_right = home_banner_border
+    border_bot_left = away_banner_border
+    border_bot_right = home_banner_border
+    border_left = away_banner_border
+    border_right = home_banner_border
+    gif_play_elapsed: float | None = None  # set when sweep phase active
 
-    # ===== Goal-banner animation overlay =====
-    # If a goal animation is currently playing, sample the appropriate GIF
-    # frame and paste it inside the banner row (between the borders).
-    if goal_animation and assets_root is not None:
+    if goal_animation:
         try:
             anim_team = goal_animation.get("team", "").upper()
             anim_side = goal_animation.get("side", "").lower()
             elapsed = float(goal_animation.get("elapsed", 0))
+            duration = float(goal_animation.get("duration", 0))
+            # Scoring team's primary color
+            scoring_colors = teams.colors_for(
+                anim_team,
+                project.team_overrides.get(anim_team) if anim_team else None)
+            sc = scoring_colors[0]
+            scoring_rgb = (sc.r, sc.g, sc.b)
+
+            # Phase boundaries
+            sweep_end = max(GOAL_PRE_PULSE_SEC + 0.01,
+                            duration - GOAL_TAIL_SEC)
+
+            def _blend(a, b, t):
+                t = max(0.0, min(1.0, t))
+                return (int(a[0] + (b[0]-a[0])*t),
+                        int(a[1] + (b[1]-a[1])*t),
+                        int(a[2] + (b[2]-a[2])*t))
+
+            if elapsed < GOAL_PRE_PULSE_SEC:
+                # Pulse: 2Hz sin wave between dim (default-ish) and full scoring
+                import math as _math
+                phase = (elapsed / GOAL_PRE_PULSE_SEC) * (2 * _math.pi * 3)
+                pulse = 0.5 + 0.5 * _math.sin(phase - _math.pi / 2)  # 0..1
+                # baseline mix: 30% scoring color even at trough so it never
+                # snaps fully dark
+                t = 0.30 + 0.70 * pulse
+                base_default = away_banner_border  # neutral starting point
+                col = _blend(base_default, scoring_rgb, t)
+                border_top_left = border_top_right = col
+                border_bot_left = border_bot_right = col
+                border_left = border_right = col
+            elif elapsed < sweep_end:
+                # Solid scoring color throughout the sweep
+                border_top_left = border_top_right = scoring_rgb
+                border_bot_left = border_bot_right = scoring_rgb
+                border_left = border_right = scoring_rgb
+                gif_play_elapsed = elapsed - GOAL_PRE_PULSE_SEC
+            else:
+                # Tail: fade scoring color back to default per-side colors
+                fade_t = (elapsed - sweep_end) / max(0.01, duration - sweep_end)
+                fade_t = max(0.0, min(1.0, fade_t))
+                border_top_left = _blend(scoring_rgb, away_banner_border, fade_t)
+                border_top_right = _blend(scoring_rgb, home_banner_border, fade_t)
+                border_bot_left = border_top_left
+                border_bot_right = border_top_right
+                border_left = border_top_left
+                border_right = border_top_right
+        except Exception:
+            # Border pulse must never break a render
+            pass
+
+    _hline(img, bx0, x_mid, by0, border_top_left, border_w)
+    _hline(img, x_mid, bx1, by0, border_top_right, border_w)
+    _hline(img, bx0, x_mid, by1 - border_w, border_bot_left, border_w)
+    _hline(img, x_mid, bx1, by1 - border_w, border_bot_right, border_w)
+    _vline(img, bx0, by0, by1, border_left, border_w)
+    _vline(img, bx1 - border_w, by0, by1, border_right, border_w)
+
+    # ===== Goal-banner animation overlay =====
+    # The GIF only plays during the SWEEP phase (after the pre-pulse). Pulse
+    # phase shows the live banners with a pulsing border; tail phase shows the
+    # banners with a fading border.
+    if goal_animation and assets_root is not None and gif_play_elapsed is not None:
+        try:
+            anim_team = goal_animation.get("team", "").upper()
+            anim_side = goal_animation.get("side", "").lower()
             gif_path = (assets_root / "animations" / "goal_banner"
                         / f"{anim_team}_{anim_side.upper()}.gif")
             if gif_path.exists():
                 from PIL import Image as _Img
                 gif = _Img.open(gif_path)
-                # Compute current frame from elapsed time + GIF duration
                 n_frames = getattr(gif, "n_frames", 1)
                 frame_durations_ms = []
                 for fi in range(n_frames):
                     gif.seek(fi)
                     frame_durations_ms.append(gif.info.get("duration", 33))
                 total_ms = sum(frame_durations_ms) or 1
-                # Loop the GIF if elapsed exceeds its native length
-                t_ms = int(elapsed * 1000) % total_ms
+                # Clamp to last frame instead of looping (we drive timing
+                # ourselves and don't want it to restart mid-display)
+                t_ms = min(int(gif_play_elapsed * 1000), total_ms - 1)
                 acc = 0
                 target_idx = 0
                 for fi, dur in enumerate(frame_durations_ms):
@@ -437,7 +510,6 @@ def render(project: Project, state: GameState,
                         break
                 gif.seek(target_idx)
                 frame = gif.convert("RGB")
-                # Fit inside the banner row (between borders)
                 inner_x0 = bx0 + border_w
                 inner_x1 = bx1 - border_w
                 inner_y0_b = by0 + border_w
@@ -446,7 +518,20 @@ def render(project: Project, state: GameState,
                 target_h = max(1, inner_y1_b - inner_y0_b)
                 resized = frame.resize((target_w, target_h),
                                        _Img.Resampling.LANCZOS)
-                img.paste(resized, (inner_x0, inner_y0_b))
+                # Chroma-key: drop pixels that are clearly magenta-dominant
+                # (high red + high blue + low green). This catches pure
+                # KEY_COLOR (255,0,255) and any blended-edge pixels that are
+                # still mostly magenta. Real team colors never satisfy all
+                # three conditions: nothing in the NHL palette has high red
+                # AND high blue AND low green simultaneously.
+                import numpy as _np
+                arr = _np.array(resized).astype(_np.int16)
+                is_key = ((arr[..., 0] > 180) &
+                          (arr[..., 2] > 180) &
+                          (arr[..., 1] < 80))
+                mask_arr = (~is_key).astype(_np.uint8) * 255
+                mask = _Img.fromarray(mask_arr, mode="L")
+                img.paste(resized, (inner_x0, inner_y0_b), mask)
         except Exception:
             # Animation overlay must never break a render
             pass
